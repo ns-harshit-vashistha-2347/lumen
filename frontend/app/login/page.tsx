@@ -34,6 +34,7 @@ export default function LoginPage() {
 
   return (
     <AuthShell
+      mode="login"
       title="Welcome back"
       subtitle="sign in to continue your session"
       footer={

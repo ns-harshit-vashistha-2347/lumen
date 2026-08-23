@@ -5,8 +5,34 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, ChevronDown } from "lucide-react";
 
+function LiveStatus() {
+  const [now, setNow] = useState<string>("");
+  useEffect(() => {
+    const tick = () =>
+      setNow(new Date().toLocaleTimeString([], { hour12: false }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="mr-2 hidden items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-faint md:flex">
+      <span className="flex items-end gap-[2px]" title="signal">
+        <span className="h-1 w-[3px] bg-ok/80" />
+        <span className="h-2 w-[3px] bg-ok/80" />
+        <span className="h-3 w-[3px] bg-ok" />
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-ok shadow-[0_0_6px_currentColor] animate-pulse" />
+        <span className="text-ok">secure</span>
+      </span>
+      <span className="text-ink">{now}</span>
+    </div>
+  );
+}
+
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/components/auth/auth-provider";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const TABS = [
   { href: "/chat", label: "chat" },
@@ -79,6 +105,21 @@ export function AppChrome() {
         </nav>
 
         <div className="flex-1" />
+
+        {/* theme toggle */}
+        <ThemeToggle />
+
+        {/* command palette hint */}
+        <button
+          onClick={() => window.dispatchEvent(new Event("lumen:palette"))}
+          className="hidden items-center gap-1.5 rounded-md border border-chrome-border bg-chrome-hover/40 px-2 py-1 font-mono text-[10.5px] text-ink-dim hover:border-prompt/40 hover:text-ink md:inline-flex"
+        >
+          <span>quick jump</span>
+          <kbd className="rounded border border-chrome-border bg-bg px-1 text-[9.5px] text-mk-yellow">⌘K</kbd>
+        </button>
+
+        {/* live status readout */}
+        <LiveStatus />
 
         {/* session / user */}
         <div ref={menuRef} className="relative">

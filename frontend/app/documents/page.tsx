@@ -1,7 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Upload, Trash2, CloudUpload, Search, CheckCheck, X as XIcon } from "lucide-react";
+import Link from "next/link";
+import {
+  Upload,
+  Trash2,
+  CloudUpload,
+  Search,
+  CheckCheck,
+  X as XIcon,
+  Keyboard,
+  MessageSquare,
+  FileText,
+  Zap,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
@@ -20,7 +32,6 @@ const ACTIVE_STATUSES = new Set<Document["status"]>([
   "storing",
 ]);
 
-// map extension → monokai token color + tag
 function fileMeta(name: string): { ext: string; color: string; kind: string } {
   const ext = (name.split(".").pop() || "").toLowerCase();
   switch (ext) {
@@ -39,13 +50,6 @@ function fileMeta(name: string): { ext: string; color: string; kind: string } {
   }
 }
 
-function formatBytes(n?: number): string {
-  if (!n && n !== 0) return "  —  ";
-  if (n < 1024) return `${n}B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
-  return `${(n / (1024 * 1024)).toFixed(1)}M`;
-}
-
 function DocumentsInner() {
   const [scope, store] = useScope();
   const [docs, setDocs] = useState<Document[]>([]);
@@ -54,8 +58,8 @@ function DocumentsInner() {
   const [dragging, setDragging] = useState(false);
   const [filter, setFilter] = useState("");
   const [cursor, setCursor] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const loadDocs = useCallback(async () => {
     try {
@@ -119,14 +123,18 @@ function DocumentsInner() {
   }, [docs, filter]);
 
   const ready = useMemo(() => docs.filter((d) => d.status === "completed"), [docs]);
+  const processing = useMemo(
+    () => docs.filter((d) => ACTIVE_STATUSES.has(d.status)),
+    [docs]
+  );
   const inScope = ready.filter((d) => scope.has(d.id));
+  const totalChunks = docs.reduce((n, d) => n + (d.chunk_count || 0), 0);
 
   function toggleAll() {
     if (inScope.length === ready.length) store.set([]);
     else store.set(ready.map((d) => d.id));
   }
 
-  // keyboard-driven picker: j/k or arrows to move, space/enter to toggle, a = all, x = clear
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -153,24 +161,68 @@ function DocumentsInner() {
       } else if (e.key === "/") {
         e.preventDefault();
         (document.getElementById("doc-filter") as HTMLInputElement | null)?.focus();
+      } else if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [filtered, cursor, store]);
 
-  // clamp cursor
   useEffect(() => {
     if (cursor >= filtered.length) setCursor(Math.max(0, filtered.length - 1));
   }, [filtered.length, cursor]);
 
-  const totalChunks = docs.reduce((n, d) => n + (d.chunk_count || 0), 0);
+  const isEmpty = !loading && docs.length === 0;
 
   return (
-    <div className="h-[calc(100vh-2.75rem)] overflow-y-auto bg-bg">
-      <div className="mx-auto max-w-5xl px-4 py-5 font-mono">
-        {/* terminal window */}
-        <div className="relative overflow-hidden rounded-md border border-chrome-border bg-bg-soft shadow-term">
+    <div className="relative h-[calc(100vh-2.75rem)] overflow-y-auto bg-bg">
+      {/* ambient hacker background */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 warp-ambient" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 warp-grid opacity-[0.3]" />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+      />
+
+      <div className="relative z-10 mx-auto max-w-6xl px-4 py-5 font-mono">
+        {/* header */}
+        <LibraryHeader />
+
+        {/* mission-control stat tiles */}
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Tile
+            label="total files"
+            value={docs.length}
+            color="text-ink"
+            hint={`${processing.length} processing`}
+          />
+          <Tile
+            label="ready"
+            value={ready.length}
+            color="text-mk-green"
+            hint="indexed & searchable"
+          />
+          <Tile
+            label="chunks"
+            value={totalChunks}
+            color="text-mk-purple"
+            hint="vector fragments"
+          />
+          <Tile
+            label="in scope"
+            value={inScope.length}
+            color="text-mk-pink"
+            hint={inScope.length === 0 ? "none selected · all searched" : "chat filter active"}
+          />
+        </div>
+
+        {/* onboarding banner — only when no docs uploaded */}
+        {isEmpty && <OnboardingHero onPick={() => fileRef.current?.click()} />}
+
+        {/* main terminal window */}
+        <div className="mt-4 overflow-hidden rounded-md border border-chrome-border bg-bg-soft/90 shadow-term backdrop-blur">
           {/* title bar */}
           <div className="flex items-center gap-2 border-b border-chrome-border bg-chrome px-3 py-2">
             <div className="flex items-center gap-1.5">
@@ -181,38 +233,26 @@ function DocumentsInner() {
             <div className="flex-1 text-center text-[10.5px] tracking-[0.16em] text-ink-faint">
               — lumen · library · ~/documents —
             </div>
-            <span className="text-[10px] tracking-[0.16em] text-ink-faint">
-              {docs.length} files
+            <span className="flex items-center gap-1.5 text-[10px] tracking-[0.16em] text-ink-faint">
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full shadow-[0_0_6px_currentColor]",
+                  processing.length ? "bg-warn animate-pulse text-warn" : "bg-ok text-ok"
+                )}
+              />
+              {processing.length ? `${processing.length} indexing` : "idle"}
             </span>
           </div>
 
-          {/* prompt + status ribbon */}
-          <div className="border-b border-chrome-border bg-bg-soft px-4 py-3 text-[12.5px] leading-relaxed">
-            <div>
-              <span className="text-mk-green">lumen@rag</span>
-              <span className="text-ink-faint">:</span>
-              <span className="text-mk-blue">~/library</span>
-              <span className="text-ink-faint">$ </span>
-              <span className="text-mk-pink">ls</span>{" "}
-              <span className="text-mk-purple">--scope</span>{" "}
-              <span className="text-mk-yellow">"active"</span>
-            </div>
-            <div className="mt-1 text-[11px] text-ink-faint">
-              <span className="text-mk-comment">
-                # {ready.length} indexed · {inScope.length} in scope · {totalChunks} chunks
-              </span>
-            </div>
-          </div>
-
-          {/* action bar */}
-          <div className="flex flex-wrap items-center gap-2 border-b border-chrome-border bg-bg-soft px-4 py-2.5">
-            <div className="relative flex-1 min-w-[200px]">
+          {/* action bar — big, obvious upload */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-chrome-border bg-bg-soft/60 px-3 py-2.5">
+            <div className="relative flex-1 min-w-[180px]">
               <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mk-comment" />
               <input
                 id="doc-filter"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder='grep filename…  ( press "/" )'
+                placeholder='search files…   ( press "/" )'
                 className="w-full rounded border border-chrome-border bg-bg py-1.5 pl-7 pr-3 text-[12px] text-ink placeholder:text-mk-comment focus:border-mk-pink focus:outline-none"
               />
             </div>
@@ -233,19 +273,20 @@ function DocumentsInner() {
               title="a — toggle all in scope"
             >
               <CheckCheck className="h-3.5 w-3.5" />
-              {inScope.length === ready.length && ready.length > 0 ? "scope --none" : "scope --all"}
+              {inScope.length === ready.length && ready.length > 0 ? "clear scope" : "select all"}
             </button>
+
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              className="inline-flex items-center gap-1.5 rounded border border-mk-pink/60 bg-mk-pink/10 px-2.5 py-1.5 text-[11px] font-semibold text-mk-pink hover:bg-mk-pink/20 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded bg-gradient-to-b from-mk-pink to-prompt-soft px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#1a0410] shadow-glow hover:brightness-110 disabled:opacity-50"
             >
               <Upload className="h-3.5 w-3.5" />
-              {uploading ? "uploading…" : "upload +"}
+              {uploading ? "uploading…" : "upload files"}
             </button>
           </div>
 
-          {/* dropzone rail — dashed border only when idle */}
+          {/* dropzone — bigger + friendlier when empty */}
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -257,172 +298,164 @@ function DocumentsInner() {
               setDragging(false);
               upload(e.dataTransfer.files);
             }}
+            onClick={() => fileRef.current?.click()}
             className={cn(
-              "border-b border-dashed px-4 py-2.5 text-center text-[11px] transition-colors",
+              "cursor-pointer border-b border-dashed px-4 text-center text-[11px] transition-colors",
               dragging
-                ? "border-mk-pink bg-mk-pink/[0.08] text-mk-pink"
-                : "border-chrome-border text-mk-comment"
+                ? "border-mk-pink bg-mk-pink/[0.10] text-mk-pink py-6"
+                : docs.length === 0
+                ? "border-mk-pink/40 text-mk-comment hover:bg-mk-pink/[0.04] py-6"
+                : "border-chrome-border text-mk-comment hover:text-ink py-2.5"
             )}
           >
             {dragging ? (
               <span className="tracking-[0.2em]">
-                <CloudUpload className="mr-1.5 inline h-3.5 w-3.5" />
+                <CloudUpload className="mr-1.5 inline h-4 w-4" />
                 DROP TO IMPORT
               </span>
             ) : (
               <>
-                <span className="text-mk-comment"># drag &amp; drop </span>
-                <span className="text-mk-yellow">*.pdf</span>
-                <span className="text-mk-comment"> | </span>
-                <span className="text-mk-yellow">*.docx</span>
-                <span className="text-mk-comment"> | </span>
-                <span className="text-mk-yellow">*.md</span>
-                <span className="text-mk-comment"> | </span>
-                <span className="text-mk-yellow">*.txt</span>
-                <span className="text-mk-comment"> — max 50M</span>
+                <CloudUpload className="mr-1.5 inline h-3.5 w-3.5" />
+                <span className="text-ink-dim">drag &amp; drop</span>{" "}
+                <span className="text-mk-yellow">.pdf .docx .md .txt</span>{" "}
+                <span className="text-mk-comment">— or click to browse (max 50M)</span>
               </>
             )}
           </div>
 
           {/* file listing */}
-          <div ref={listRef} className="bg-bg-soft">
-            {/* column header */}
-            <div className="grid grid-cols-[24px_44px_1fr_60px_100px_90px_28px] items-center gap-3 border-b border-chrome-border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-mk-comment">
-              <span>[·]</span>
-              <span>type</span>
-              <span>filename</span>
-              <span className="text-right">chunks</span>
-              <span>modified</span>
-              <span>status</span>
-              <span />
-            </div>
-
+          <div className="bg-bg-soft/40">
             {loading ? (
               <div className="px-4 py-10 text-center text-[12px] text-mk-comment">
                 <span className="text-mk-pink">$</span> loading manifest
                 <span className="caret text-mk-pink" />
               </div>
             ) : filtered.length === 0 ? (
-              <div className="px-4 py-14 text-center text-[12px] text-mk-comment">
-                {docs.length === 0 ? (
-                  <>
-                    <div className="text-mk-yellow"># no files in this workspace</div>
-                    <div className="mt-1">upload one above to bootstrap the corpus</div>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-mk-pink">grep</span>: no match for{" "}
-                    <span className="text-mk-yellow">"{filter}"</span>
-                  </>
-                )}
-              </div>
+              docs.length === 0 ? (
+                <EmptyList onUpload={() => fileRef.current?.click()} />
+              ) : (
+                <div className="px-4 py-14 text-center text-[12px] text-mk-comment">
+                  <span className="text-mk-pink">grep</span>: no match for{" "}
+                  <span className="text-mk-yellow">"{filter}"</span>
+                </div>
+              )
             ) : (
-              <ul>
-                {filtered.map((doc, i) => {
-                  const isReady = doc.status === "completed";
-                  const isInScope = scope.has(doc.id);
-                  const isCursor = i === cursor;
-                  const meta = fileMeta(doc.filename);
-                  return (
-                    <li
-                      key={doc.id}
-                      onMouseEnter={() => setCursor(i)}
-                      className={cn(
-                        "group grid grid-cols-[24px_44px_1fr_60px_100px_90px_28px] items-center gap-3 border-l-2 px-3 py-1.5 text-[12px] transition-colors",
-                        isCursor
-                          ? "border-l-mk-pink bg-line/70"
-                          : "border-l-transparent hover:bg-line/40",
-                        isInScope && !isCursor && "bg-mk-green/[0.05]"
-                      )}
-                    >
-                      {/* select bracket */}
-                      <button
+              <>
+                {/* selection helper strip */}
+                <div className="border-b border-chrome-border bg-chrome/50 px-4 py-1.5 text-[10.5px] uppercase tracking-[0.16em] text-mk-comment">
+                  <span className="text-mk-green">tip:</span>{" "}
+                  <span className="normal-case tracking-normal text-ink-dim">
+                    click a row to add it to your chat scope · selected docs get searched first
+                  </span>
+                </div>
+
+                <ul className="divide-y divide-chrome-border/60">
+                  {filtered.map((doc, i) => {
+                    const isReady = doc.status === "completed";
+                    const isInScope = scope.has(doc.id);
+                    const isCursor = i === cursor;
+                    const meta = fileMeta(doc.filename);
+                    return (
+                      <li
+                        key={doc.id}
+                        onMouseEnter={() => setCursor(i)}
                         onClick={() => isReady && store.toggle(doc.id)}
-                        disabled={!isReady}
-                        aria-label={isInScope ? "remove from scope" : "add to scope"}
                         className={cn(
-                          "text-[13px] font-bold tabular-nums transition-colors",
-                          isInScope
-                            ? "text-mk-green"
-                            : isReady
-                            ? "text-mk-comment hover:text-mk-pink"
-                            : "text-mk-comment/40"
-                        )}
-                        title={
-                          !isReady
-                            ? "indexing…"
-                            : isInScope
-                            ? "in scope — click / space to toggle"
-                            : "click / space to add to scope"
-                        }
-                      >
-                        {isInScope ? "[x]" : "[ ]"}
-                      </button>
-
-                      {/* type chip */}
-                      <span
-                        className={cn(
-                          "rounded-sm border border-current/40 bg-bg px-1.5 py-[1px] text-center text-[9.5px] font-bold tracking-[0.12em]",
-                          meta.color
+                          "group flex cursor-pointer items-center gap-3 border-l-2 px-3 py-2.5 text-[12.5px] transition-colors",
+                          isCursor
+                            ? "border-l-mk-pink bg-line/70"
+                            : "border-l-transparent hover:bg-line/40",
+                          isInScope && !isCursor && "border-l-mk-green/60 bg-mk-green/[0.06]",
+                          !isReady && "cursor-not-allowed"
                         )}
                       >
-                        {meta.kind}
-                      </span>
-
-                      {/* filename */}
-                      <div className="min-w-0">
-                        <span className={cn("truncate", isReady ? "text-ink" : "text-ink-dim")}>
-                          {doc.filename}
+                        {/* checkbox */}
+                        <span
+                          className={cn(
+                            "flex h-5 w-5 shrink-0 items-center justify-center rounded border-[1.5px] transition-all",
+                            isInScope
+                              ? "border-mk-green bg-mk-green/25 shadow-[0_0_8px_rgba(166,226,46,0.45)]"
+                              : isReady
+                              ? "border-chrome-border group-hover:border-mk-pink/60"
+                              : "border-chrome-border/40"
+                          )}
+                        >
+                          {isInScope && (
+                            <svg viewBox="0 0 12 12" className="h-3 w-3 text-mk-green">
+                              <path
+                                d="M2 6.5l2.5 2.5L10 3.5"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                fill="none"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
                         </span>
-                        {doc.error_message && (
-                          <span className="ml-2 text-[10.5px] text-mk-pink">
-                            × {doc.error_message}
-                          </span>
-                        )}
-                      </div>
 
-                      {/* chunks */}
-                      <span className="text-right tabular-nums text-mk-purple">
-                        {doc.chunk_count ? doc.chunk_count : <span className="text-mk-comment">—</span>}
-                      </span>
-
-                      {/* modified */}
-                      <span className="truncate text-[10.5px] text-mk-comment">
-                        {new Date(doc.created_at).toLocaleDateString()}{" "}
-                        <span className="text-mk-comment/70">
-                          {new Date(doc.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                        {/* type chip */}
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-sm border border-current/40 bg-bg px-1.5 py-[1px] text-center text-[9.5px] font-bold tracking-[0.12em]",
+                            meta.color
+                          )}
+                        >
+                          {meta.kind}
                         </span>
-                      </span>
 
-                      {/* status */}
-                      <StatusBadge status={doc.status} />
+                        {/* filename + meta */}
+                        <div className="min-w-0 flex-1">
+                          <div className={cn("truncate", isReady ? "text-ink" : "text-ink-dim")}>
+                            {doc.filename}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-3 text-[10.5px] text-mk-comment">
+                            <span>
+                              {new Date(doc.created_at).toLocaleDateString()}{" "}
+                              {new Date(doc.created_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            <span className="tabular-nums text-mk-purple">
+                              {doc.chunk_count ? `${doc.chunk_count} chunks` : "—"}
+                            </span>
+                            {doc.error_message && (
+                              <span className="text-mk-pink">× {doc.error_message}</span>
+                            )}
+                          </div>
+                        </div>
 
-                      {/* delete */}
-                      <button
-                        onClick={() => remove(doc.id, doc.filename)}
-                        className="rounded p-1 text-mk-comment opacity-0 transition-opacity hover:bg-mk-pink/15 hover:text-mk-pink group-hover:opacity-100"
-                        title="d — delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                        {/* status */}
+                        <StatusBadge status={doc.status} />
+
+                        {/* delete */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(doc.id, doc.filename);
+                          }}
+                          className="rounded p-1 text-mk-comment opacity-0 transition-opacity hover:bg-mk-pink/15 hover:text-mk-pink group-hover:opacity-100"
+                          title="d — delete"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
             )}
 
             {/* footer status bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-chrome-border bg-chrome px-3 py-1.5 text-[10.5px] text-mk-comment">
-              <div className="flex flex-wrap items-center gap-3">
-                <Key label="j/k" desc="navigate" />
-                <Key label="space" desc="scope" />
-                <Key label="a" desc="all" />
-                <Key label="d" desc="delete" />
-                <Key label="/" desc="search" />
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-chrome-border bg-chrome/80 px-3 py-1.5 text-[10.5px] text-mk-comment">
+              <button
+                onClick={() => setShortcutsOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded border border-chrome-border bg-bg-soft px-2 py-[2px] text-mk-yellow hover:border-mk-yellow/60"
+              >
+                <Keyboard className="h-3 w-3" />
+                {shortcutsOpen ? "hide" : "shortcuts"} <kbd className="text-mk-comment">?</kbd>
+              </button>
               <div className="flex items-center gap-2">
                 <span>
                   scope: <span className="text-mk-green">{inScope.length}</span>
@@ -439,35 +472,182 @@ function DocumentsInner() {
                 )}
               </div>
             </div>
+
+            {shortcutsOpen && (
+              <div className="flex flex-wrap items-center gap-4 border-t border-chrome-border bg-bg-soft/70 px-3 py-2 text-[10.5px] text-mk-comment animate-slide-up">
+                <Key label="j/k" desc="navigate rows" />
+                <Key label="space" desc="add / remove from scope" />
+                <Key label="a" desc="select all" />
+                <Key label="d" desc="delete file" />
+                <Key label="/" desc="focus search" />
+                <Key label="?" desc="toggle this panel" />
+              </div>
+            )}
           </div>
         </div>
+      </div>
 
-        {/* selection preview strip */}
-        {inScope.length > 0 && (
-          <div className="mt-3 rounded-md border border-mk-green/40 bg-mk-green/[0.06] px-3 py-2 text-[11px] text-ink animate-slide-up">
-            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-mk-green">
-              ▸ chat scope · {inScope.length} document{inScope.length === 1 ? "" : "s"}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {inScope.map((d) => (
-                <span
-                  key={d.id}
-                  className="inline-flex items-center gap-1 rounded border border-mk-green/30 bg-bg-soft px-1.5 py-[2px] text-[10.5px] text-ink-muted"
-                >
-                  <span className="text-mk-green">▸</span>
-                  <span className="max-w-[220px] truncate">{d.filename}</span>
-                  <button
-                    onClick={() => store.remove(d.id)}
-                    className="text-mk-comment hover:text-mk-pink"
-                    aria-label="remove"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+      {/* floating action pill — jump to chat */}
+      {inScope.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2 animate-slide-up">
+          <Link
+            href="/chat"
+            className="group flex items-center gap-3 rounded-full border border-mk-green/60 bg-bg-soft/95 py-2 pl-3 pr-1.5 shadow-[0_10px_40px_-10px_rgba(166,226,46,0.6),0_0_0_1px_rgba(166,226,46,0.15)] backdrop-blur"
+          >
+            <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.14em] text-ink">
+              <span className="h-1.5 w-1.5 rounded-full bg-mk-green shadow-[0_0_6px_currentColor] animate-pulse" />
+              <span className="text-mk-green">{inScope.length}</span> selected
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-b from-mk-green to-ok-soft px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#0d1500] group-hover:brightness-110">
+              <MessageSquare className="h-3.5 w-3.5" />
+              chat with these
+            </span>
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LibraryHeader() {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <pre className="font-mono text-[10px] leading-[1.1] text-mk-pink drop-shadow-[0_0_8px_rgba(249,38,114,0.35)]">
+{String.raw` _    ___ ___ ___    _   _____   __
+| |  |_ _| _ ) _ \  /_\ | _ \ \ / /
+| |__ | || _ \   / / _ \|   /\ V /
+|____|___|___/_|_\/_/ \_\_|_\ |_|`}
+        </pre>
+        <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
+          workspace vault · index &amp; select docs for chat
+        </p>
+      </div>
+      <div className="hidden items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-faint md:flex">
+        <span className="flex items-end gap-[2px]">
+          <span className="h-1 w-[3px] bg-mk-green/80" />
+          <span className="h-2 w-[3px] bg-mk-green/80" />
+          <span className="h-3 w-[3px] bg-mk-green" />
+        </span>
+        <span className="text-mk-green">vault online</span>
+      </div>
+    </div>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  color,
+  hint,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  hint: string;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-md border border-chrome-border bg-bg-soft/70 px-3 py-2 shadow-block backdrop-blur">
+      <div className="text-[9.5px] uppercase tracking-[0.2em] text-mk-comment">{label}</div>
+      <div className={cn("mt-0.5 font-mono text-[22px] font-bold tabular-nums leading-none", color)}>
+        {value}
+      </div>
+      <div className="mt-1 text-[10px] text-mk-comment">{hint}</div>
+      <div
+        aria-hidden
+        className={cn("pointer-events-none absolute inset-x-0 bottom-0 h-[2px] opacity-70", color.replace("text-", "bg-"))}
+      />
+    </div>
+  );
+}
+
+function OnboardingHero({ onPick }: { onPick: () => void }) {
+  return (
+    <div className="mt-4 grid gap-3 rounded-md border border-mk-pink/30 bg-bg-soft/70 p-4 shadow-block backdrop-blur md:grid-cols-[1.4fr_1fr]">
+      <div>
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-mk-pink">
+          ▸ getting started
+        </div>
+        <h2 className="mt-1 font-mono text-[18px] font-bold text-ink">
+          feed the vault, then chat.
+        </h2>
+        <ol className="mt-3 space-y-2 font-mono text-[12.5px] text-ink-dim">
+          <Step n={1} title="upload documents">
+            drag files onto the box below, or hit the big{" "}
+            <span className="text-mk-pink">upload files</span> button.
+          </Step>
+          <Step n={2} title="wait for indexing" icon={<Zap className="h-3.5 w-3.5 text-mk-yellow" />}>
+            lumen parses, chunks &amp; embeds them. status turns{" "}
+            <span className="text-mk-green">READY</span> when done.
+          </Step>
+          <Step n={3} title="click to select scope" icon={<FileText className="h-3.5 w-3.5 text-mk-green" />}>
+            tap the rows you want to chat with — then use the{" "}
+            <span className="text-mk-green">chat with these</span> pill.
+          </Step>
+        </ol>
+      </div>
+      <button
+        onClick={onPick}
+        className="group relative flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-mk-pink/50 bg-bg/60 px-6 py-8 text-center font-mono transition-all hover:border-mk-pink hover:bg-mk-pink/[0.05]"
+      >
+        <CloudUpload className="h-10 w-10 text-mk-pink drop-shadow-[0_0_10px_rgba(249,38,114,0.5)] transition-transform group-hover:scale-110" />
+        <div className="text-[13px] font-bold uppercase tracking-[0.16em] text-mk-pink">
+          drop files here
+        </div>
+        <div className="text-[11px] text-mk-comment">
+          pdf · docx · md · txt <span className="text-mk-comment/60">(up to 50 MB)</span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function Step({
+  n,
+  title,
+  children,
+  icon,
+}: {
+  n: number;
+  title: string;
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <li className="flex gap-3">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-mk-pink/40 bg-mk-pink/10 text-[10.5px] font-bold text-mk-pink">
+        {n}
+      </span>
+      <div>
+        <div className="flex items-center gap-1.5 text-ink">
+          {icon}
+          <span>{title}</span>
+        </div>
+        <div className="text-[11.5px] text-ink-dim">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+function EmptyList({ onUpload }: { onUpload: () => void }) {
+  return (
+    <div className="px-4 py-12 text-center">
+      <div className="mx-auto max-w-md">
+        <FileText className="mx-auto h-8 w-8 text-mk-comment/60" />
+        <div className="mt-3 font-mono text-[13px] text-ink">
+          your vault is empty.
+        </div>
+        <div className="mt-1 font-mono text-[11.5px] text-mk-comment">
+          upload a document above to bootstrap the corpus. anything you feed lumen becomes
+          searchable in chat.
+        </div>
+        <button
+          onClick={onUpload}
+          className="mt-4 inline-flex items-center gap-1.5 rounded bg-gradient-to-b from-mk-pink to-prompt-soft px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-[#1a0410] shadow-glow hover:brightness-110"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          upload your first file
+        </button>
       </div>
     </div>
   );
@@ -475,8 +655,8 @@ function DocumentsInner() {
 
 function Key({ label, desc }: { label: string; desc: string }) {
   return (
-    <span className="inline-flex items-center gap-1">
-      <kbd className="rounded border border-chrome-border bg-bg px-1 py-[1px] font-mono text-[9.5px] text-mk-yellow">
+    <span className="inline-flex items-center gap-1.5">
+      <kbd className="rounded border border-chrome-border bg-bg px-1.5 py-[1px] font-mono text-[9.5px] text-mk-yellow">
         {label}
       </kbd>
       <span className="text-mk-comment">{desc}</span>

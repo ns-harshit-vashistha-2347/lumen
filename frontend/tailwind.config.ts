@@ -1,5 +1,7 @@
 import type { Config } from "tailwindcss";
 
+const c = (v: string) => `rgb(var(--c-${v}) / <alpha-value>)`;
+
 const config: Config = {
   content: [
     "./app/**/*.{ts,tsx}",
@@ -9,52 +11,46 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Monokai — Sublime Text classic
         bg: {
-          DEFAULT: "#272822",     // page ground (monokai base)
-          soft: "#1e1f1c",        // panel (darker)
-          raised: "#33342d",      // raised surface (highlighted line)
+          DEFAULT: c("bg"),
+          soft: c("bg-soft"),
+          raised: c("bg-raised"),
         },
         chrome: {
-          DEFAULT: "#1e1f1c",     // window chrome (title bar)
-          hover: "#3e3d32",       // selection / hover
-          border: "#3e3d32",      // border / gutter
+          DEFAULT: c("chrome"),
+          hover: c("chrome-hover"),
+          border: c("chrome-border"),
         },
         line: {
-          DEFAULT: "#49483e",     // highlight line
-          soft: "#3e3d32",
+          DEFAULT: c("line"),
+          soft: c("line-soft"),
         },
         ink: {
-          DEFAULT: "#f8f8f2",     // foreground (monokai fg)
-          muted: "#cfd0c2",
-          dim: "#a6a68c",
-          faint: "#75715e",       // monokai comment color
+          DEFAULT: c("ink"),
+          muted: c("ink-muted"),
+          dim: c("ink-dim"),
+          faint: c("ink-faint"),
         },
-        // pink is the new prompt/signature — monokai keyword
         prompt: {
-          DEFAULT: "#f92672",     // pink (keywords)
-          soft: "#d81b60",
-          glow: "#ff79c6",
+          DEFAULT: c("prompt"),
+          soft: c("prompt-soft"),
+          glow: c("prompt-glow"),
         },
-        // monokai palette accents
         mk: {
-          pink: "#f92672",
-          green: "#a6e22e",
-          yellow: "#e6db74",
-          orange: "#fd971f",
-          purple: "#ae81ff",
-          blue: "#66d9ef",
-          comment: "#75715e",
+          pink: c("mk-pink"),
+          green: c("mk-green"),
+          yellow: c("mk-yellow"),
+          orange: c("mk-orange"),
+          purple: c("mk-purple"),
+          blue: c("mk-blue"),
+          comment: c("mk-comment"),
         },
-        // green = done / ready (function name in monokai)
         ok: {
-          DEFAULT: "#a6e22e",
-          soft: "#7cb342",
+          DEFAULT: c("ok"),
+          soft: c("ok-soft"),
         },
-        // yellow/orange = wait (string / constant)
-        warn: "#fd971f",
-        // pink = fail / delete (keyword)
-        danger: "#f92672",
+        warn: c("warn"),
+        danger: c("danger"),
       },
       fontFamily: {
         sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
@@ -71,26 +67,29 @@ const config: Config = {
         DEFAULT: "4px",
       },
       boxShadow: {
-        block: "0 1px 0 0 rgba(255,255,255,0.03) inset, 0 8px 24px -12px rgba(0,0,0,0.7)",
-        prompt: "0 0 0 1px rgba(249,38,114,0.45), 0 0 24px -6px rgba(249,38,114,0.5)",
-        glow: "0 0 12px -2px rgba(249,38,114,0.6)",
-        term: "inset 0 0 0 1px #3e3d32, 0 20px 40px -20px rgba(0,0,0,0.8)",
+        block:
+          "0 1px 0 0 rgba(255,255,255,0.03) inset, 0 8px 24px -12px rgba(0,0,0,0.7)",
+        prompt:
+          "0 0 0 1px rgb(var(--c-prompt) / 0.45), 0 0 24px -6px rgb(var(--c-prompt) / 0.5)",
+        glow: "0 0 12px -2px rgb(var(--c-prompt) / 0.6)",
+        term:
+          "inset 0 0 0 1px rgb(var(--c-chrome-border)), 0 20px 40px -20px rgba(0,0,0,0.8)",
       },
       backgroundImage: {
         "warp-grid":
-          "linear-gradient(rgba(249,38,114,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(249,38,114,0.05) 1px, transparent 1px)",
+          "linear-gradient(rgb(var(--c-prompt) / 0.05) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--c-prompt) / 0.05) 1px, transparent 1px)",
         "warp-glow":
-          "radial-gradient(80% 60% at 100% 0%, rgba(249,38,114,0.12), transparent 60%)",
+          "radial-gradient(80% 60% at 100% 0%, rgb(var(--c-prompt) / 0.12), transparent 60%)",
         "scanline":
           "repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px)",
       },
       animation: {
-        "blink": "blink 1s steps(2) infinite",
+        blink: "blink 1s steps(2) infinite",
         "bar-shimmer": "barShimmer 1.4s ease-in-out infinite",
         "pulse-ring": "pulseRing 1.6s ease-out infinite",
         "fade-in": "fadeIn 200ms ease-out",
         "slide-up": "slideUp 240ms cubic-bezier(0.16, 1, 0.3, 1)",
-        "flicker": "flicker 3s linear infinite",
+        flicker: "flicker 3s linear infinite",
       },
       keyframes: {
         blink: { "0%, 49%": { opacity: "1" }, "50%, 100%": { opacity: "0" } },

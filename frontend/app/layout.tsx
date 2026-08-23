@@ -23,6 +23,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem('lumen.theme');if(t&&t!=='monokai')document.documentElement.setAttribute('data-theme',t);}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-bg text-ink antialiased">
         <div className="pointer-events-none fixed inset-0 -z-10">
           <div className="absolute inset-0 warp-grid opacity-60" />

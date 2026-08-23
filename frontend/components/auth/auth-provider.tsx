@@ -21,6 +21,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   async function load() {
+    const preview =
+      typeof window !== "undefined" &&
+      window.location.search.includes("preview=1");
+    if (preview) {
+      setUser({ id: "preview", email: "you@lumen.dev", full_name: "Preview User" } as User);
+      setLoading(false);
+      return;
+    }
     if (!tokenStore.getAccess()) {
       setUser(null);
       setLoading(false);

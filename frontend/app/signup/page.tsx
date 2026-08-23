@@ -39,6 +39,7 @@ export default function SignupPage() {
 
   return (
     <AuthShell
+      mode="signup"
       title="Create your account"
       subtitle="start a new lumen session"
       footer={

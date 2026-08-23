@@ -2,22 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
+/* -------- monokai (default) -------- */
+/* All colors as space-separated RGB channels so Tailwind's <alpha-value> works. */
+:root {
+  --c-bg:            39 40 34;
+  --c-bg-soft:       30 31 28;
+  --c-bg-raised:     51 52 45;
+  --c-chrome:        30 31 28;
+  --c-chrome-hover:  62 61 50;
+  --c-chrome-border: 62 61 50;
+  --c-line:          73 72 62;
+  --c-line-soft:     62 61 50;
+  --c-ink:           248 248 242;
+  --c-ink-muted:     207 208 194;
+  --c-ink-dim:       166 166 140;
+  --c-ink-faint:     117 113 94;
+  --c-prompt:        249 38 114;
+  --c-prompt-soft:   216 27 96;
+  --c-prompt-glow:   255 121 198;
+  --c-mk-pink:       249 38 114;
+  --c-mk-green:      166 226 46;
+  --c-mk-yellow:     230 219 116;
+  --c-mk-orange:     253 151 31;
+  --c-mk-purple:     174 129 255;
+  --c-mk-blue:       102 217 239;
+  --c-mk-comment:    117 113 94;
+  --c-ok:            166 226 46;
+  --c-ok-soft:       124 179 66;
+  --c-warn:          253 151 31;
+  --c-danger:        249 38 114;
+}
+
+/* -------- matrix / green-on-black terminal -------- */
+:root[data-theme="matrix"] {
+  --c-bg:            0 0 0;
+  --c-bg-soft:       5 12 5;
+  --c-bg-raised:     10 26 10;
+  --c-chrome:        3 6 3;
+  --c-chrome-hover:  15 40 16;
+  --c-chrome-border: 20 61 32;
+  --c-line:          16 43 20;
+  --c-line-soft:     11 31 14;
+  --c-ink:           200 255 200;
+  --c-ink-muted:     143 221 143;
+  --c-ink-dim:       90 160 90;
+  --c-ink-faint:     47 106 47;
+  --c-prompt:        0 255 102;
+  --c-prompt-soft:   0 184 70;
+  --c-prompt-glow:   168 255 184;
+  --c-mk-pink:       0 255 102;
+  --c-mk-green:      0 255 102;
+  --c-mk-yellow:     255 204 0;
+  --c-mk-orange:     255 154 61;
+  --c-mk-purple:     168 255 184;
+  --c-mk-blue:       127 255 176;
+  --c-mk-comment:    47 106 47;
+  --c-ok:            0 255 102;
+  --c-ok-soft:       0 184 70;
+  --c-warn:          255 204 0;
+  --c-danger:        255 68 68;
+}
+
 @layer base {
   html,
   body {
-    background-color: #272822;
-    color: #f8f8f2;
+    background-color: rgb(var(--c-bg));
+    color: rgb(var(--c-ink));
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   * {
-    border-color: theme("colors.chrome.border");
+    border-color: rgb(var(--c-chrome-border));
   }
 
   ::selection {
-    background: rgba(249, 38, 114, 0.35);
+    background: rgb(var(--c-prompt) / 0.35);
     color: #ffffff;
   }
 
@@ -29,12 +90,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #49483e;
+    background: rgb(var(--c-line));
     border-radius: 4px;
-    border: 2px solid #272822;
+    border: 2px solid rgb(var(--c-bg));
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #75715e;
+    background: rgb(var(--c-ink-faint));
   }
 }
 
@@ -46,16 +107,16 @@
 
   .warp-grid {
     background-image:
-      linear-gradient(rgba(249, 38, 114, 0.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(249, 38, 114, 0.045) 1px, transparent 1px);
+      linear-gradient(rgb(var(--c-prompt) /0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--c-prompt) /0.045) 1px, transparent 1px);
     background-size: 26px 26px;
     background-position: -1px -1px;
   }
 
   .warp-ambient {
     background:
-      radial-gradient(60% 45% at 100% 0%, rgba(249, 38, 114, 0.12), transparent 60%),
-      radial-gradient(50% 40% at 0% 100%, rgba(166, 226, 46, 0.06), transparent 60%);
+      radial-gradient(60% 45% at 100% 0%, rgb(var(--c-prompt) /0.12), transparent 60%),
+      radial-gradient(50% 40% at 0% 100%, rgb(var(--c-prompt) /0.06), transparent 60%);
   }
 
   .crt-flicker {
@@ -89,34 +150,34 @@
     margin-left: 2px;
   }
 
-  /* monokai token colors for arbitrary use */
-  .tok-kw { color: #f92672; }
-  .tok-fn { color: #a6e22e; }
-  .tok-str { color: #e6db74; }
-  .tok-num { color: #ae81ff; }
-  .tok-type { color: #66d9ef; }
-  .tok-const { color: #fd971f; }
-  .tok-comment { color: #75715e; font-style: italic; }
+  /* syntax token colors — theme-aware */
+  .tok-kw { color: rgb(var(--c-mk-pink)); }
+  .tok-fn { color: rgb(var(--c-mk-green)); }
+  .tok-str { color: rgb(var(--c-mk-yellow)); }
+  .tok-num { color: rgb(var(--c-mk-purple)); }
+  .tok-type { color: rgb(var(--c-mk-blue)); }
+  .tok-const { color: rgb(var(--c-mk-orange)); }
+  .tok-comment { color: rgb(var(--c-mk-comment)); font-style: italic; }
 
   /* markdown output inside chat blocks */
   .prose-warp {
-    color: #f8f8f2;
+    color: rgb(var(--c-ink));
     line-height: 1.65;
     font-size: 14px;
   }
   .prose-warp p { margin: 0 0 0.65rem; }
   .prose-warp p:last-child { margin-bottom: 0; }
   .prose-warp strong { color: #ffffff; font-weight: 600; }
-  .prose-warp em { color: #e6db74; font-style: italic; }
+  .prose-warp em { color: rgb(var(--c-mk-yellow)); font-style: italic; }
   .prose-warp h1, .prose-warp h2, .prose-warp h3 {
     font-weight: 600;
     margin: 1rem 0 0.4rem;
-    color: #f92672;
+    color: rgb(var(--c-prompt));
     letter-spacing: -0.01em;
   }
   .prose-warp h1 { font-size: 1.15rem; }
   .prose-warp h2 { font-size: 1.05rem; }
-  .prose-warp h3 { font-size: 0.975rem; color: #a6e22e; }
+  .prose-warp h3 { font-size: 0.975rem; color: rgb(var(--c-mk-green)); }
   .prose-warp ul, .prose-warp ol {
     padding-left: 1.4rem;
     margin: 0.4rem 0 0.75rem;
@@ -128,21 +189,21 @@
     content: "▸";
     position: absolute;
     left: -1rem;
-    color: #f92672;
+    color: rgb(var(--c-prompt));
   }
   .prose-warp ol li { margin: 0.2rem 0; }
-  .prose-warp li::marker { color: #ae81ff; }
+  .prose-warp li::marker { color: rgb(var(--c-mk-purple)); }
   .prose-warp code {
-    background: rgba(249, 38, 114, 0.14);
-    color: #f92672;
+    background: rgb(var(--c-prompt) / 0.14);
+    color: rgb(var(--c-prompt));
     padding: 0.08rem 0.35rem;
     border-radius: 3px;
     font-size: 0.86em;
     font-family: theme("fontFamily.mono");
   }
   .prose-warp pre {
-    background: #1e1f1c;
-    border: 1px solid #3e3d32;
+    background: rgb(var(--c-bg-soft));
+    border: 1px solid rgb(var(--c-chrome-border));
     padding: 0.75rem 0.9rem;
     border-radius: 4px;
     overflow-x: auto;
@@ -151,20 +212,20 @@
   }
   .prose-warp pre code {
     background: transparent;
-    color: #f8f8f2;
+    color: rgb(var(--c-ink));
     padding: 0;
   }
   .prose-warp a {
-    color: #66d9ef;
+    color: rgb(var(--c-mk-blue));
     text-decoration: underline;
     text-underline-offset: 3px;
-    text-decoration-color: rgba(102, 217, 239, 0.4);
+    text-decoration-color: rgb(var(--c-prompt) / 0.4);
   }
-  .prose-warp a:hover { text-decoration-color: #66d9ef; }
+  .prose-warp a:hover { text-decoration-color: rgb(var(--c-mk-blue)); }
   .prose-warp blockquote {
-    border-left: 2px solid #a6e22e;
+    border-left: 2px solid rgb(var(--c-mk-green));
     padding-left: 0.9rem;
-    color: #75715e;
+    color: rgb(var(--c-mk-comment));
     margin: 0.7rem 0;
     font-style: italic;
   }

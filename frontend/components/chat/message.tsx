@@ -1,11 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { SourceChunk } from "@/lib/rag";
-import type { Stage } from "@/lib/use-pipeline";
 import { Sources } from "./sources";
-import { Pipeline } from "./pipeline";
 
 export interface ChatMessage {
   id: string;
@@ -13,7 +13,6 @@ export interface ChatMessage {
   content: string;
   sources?: SourceChunk[];
   loading?: boolean;
-  pipelineStages?: Stage[];
   scopeCount?: number;
   at?: Date;
 }
@@ -45,23 +44,32 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             {isUser ? "you" : "lumen"}
           </span>
           {!isUser && message.loading && (
-            <span className="text-prompt normal-case tracking-normal">
-              · agent working
+            <span className="text-prompt normal-case tracking-normal flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-prompt animate-pulse shadow-[0_0_6px_currentColor]" />
+              proc
             </span>
           )}
-          {!isUser && !message.loading && message.pipelineStages && (
-            <span className="text-ok normal-case tracking-normal">· done</span>
+          {!isUser && !message.loading && (
+            <span className="text-ok normal-case tracking-normal flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-ok shadow-[0_0_6px_currentColor]" />
+              ok
+            </span>
           )}
         </span>
-        <span className="text-ink-faint">
-          {message.at
-            ? message.at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-            : ""}
-          {isUser && message.scopeCount != null && (
-            <span className="ml-3">
-              scope <span className="text-prompt">{message.scopeCount || "all"}</span>
-            </span>
+        <span className="flex items-center gap-3 text-ink-faint">
+          {!isUser && !message.loading && message.content && (
+            <CopyButton text={message.content} />
           )}
+          <span>
+            {message.at
+              ? message.at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+              : ""}
+            {isUser && message.scopeCount != null && (
+              <span className="ml-3">
+                scope <span className="text-prompt">{message.scopeCount || "all"}</span>
+              </span>
+            )}
+          </span>
         </span>
       </header>
 
@@ -71,17 +79,10 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             {message.content}
           </p>
         ) : message.loading ? (
-          <LoadingBody stages={message.pipelineStages} />
+          <LoadingBody />
         ) : (
           <>
-            {message.pipelineStages && (
-              <div className="mb-2">
-                <Pipeline stages={message.pipelineStages} />
-              </div>
-            )}
-            <div className="prose-warp">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
-            </div>
+            <TypewriterMarkdown content={message.content} id={message.id} />
             {message.sources && message.sources.length > 0 && (
               <Sources sources={message.sources} />
             )}
@@ -92,15 +93,109 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function LoadingBody({ stages }: { stages?: Stage[] }) {
+const TRACE_LINES: { c: string; t: string }[] = [
+  { c: "text-mk-blue",   t: "opening secure channel to lumen://rag" },
+  { c: "text-mk-green",  t: "handshake ok · encryption AES-256" },
+  { c: "text-ink-dim",   t: "resolving scope graph…" },
+  { c: "text-mk-purple", t: "seeding embedder · text-emb-3" },
+  { c: "text-ink-dim",   t: "ranking neighbours · cosine ↑" },
+  { c: "text-mk-yellow", t: "assembling context window" },
+  { c: "text-prompt",    t: "streaming inference…" },
+];
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div>
-      <div className="flex items-center gap-2 font-mono text-[12px] text-ink-dim">
-        <span className="text-prompt">▸</span>
-        <span>tracing across your library</span>
-        <span className="caret text-prompt" />
-      </div>
-      {stages && <Pipeline stages={stages} />}
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        } catch {}
+      }}
+      className="inline-flex items-center gap-1 rounded border border-chrome-border bg-bg-soft/70 px-1.5 py-[2px] text-[9.5px] tracking-[0.14em] text-ink-dim hover:border-mk-green/50 hover:text-mk-green"
+      title="copy answer"
+    >
+      {copied ? (
+        <>
+          <Check className="h-2.5 w-2.5" /> copied
+        </>
+      ) : (
+        <>
+          <Copy className="h-2.5 w-2.5" /> copy
+        </>
+      )}
+    </button>
+  );
+}
+
+const REVEALED = new Set<string>();
+
+function TypewriterMarkdown({ content, id }: { content: string; id: string }) {
+  const skipAnim = REVEALED.has(id);
+  const [n, setN] = useState(skipAnim ? content.length : 0);
+  useEffect(() => {
+    if (skipAnim) return;
+    // per-tick chars scale with length so long answers finish in ~1.5s
+    const per = Math.max(2, Math.ceil(content.length / 90));
+    const id2 = setInterval(() => {
+      setN((v) => {
+        const next = Math.min(v + per, content.length);
+        if (next >= content.length) {
+          clearInterval(id2);
+          REVEALED.add(id);
+        }
+        return next;
+      });
+    }, 18);
+    return () => clearInterval(id2);
+  }, [content, skipAnim, id]);
+
+  const shown = content.slice(0, n);
+  const done = n >= content.length;
+  return (
+    <div className="prose-warp">
+      <ReactMarkdown>{shown}</ReactMarkdown>
+      {!done && <span className="caret text-prompt align-baseline" />}
+    </div>
+  );
+}
+
+function LoadingBody() {
+  const [n, setN] = useState(1);
+  const [ms, setMs] = useState(0);
+  useEffect(() => {
+    const t0 = performance.now();
+    const tick = setInterval(() => setMs(Math.floor(performance.now() - t0)), 47);
+    const grow = setInterval(
+      () => setN((v) => Math.min(v + 1, TRACE_LINES.length)),
+      520
+    );
+    return () => {
+      clearInterval(tick);
+      clearInterval(grow);
+    };
+  }, []);
+
+  const shown = TRACE_LINES.slice(0, n);
+
+  return (
+    <div className="font-mono text-[12px] leading-[1.65] text-ink-dim">
+      {shown.map((line, i) => {
+        const isLast = i === shown.length - 1;
+        const stamp = String(Math.min(ms, 9999)).padStart(4, "0");
+        return (
+          <div key={i} className="flex gap-2">
+            <span className="text-ink-faint">[{stamp.slice(0, -3)}.{stamp.slice(-3)}s]</span>
+            <span className={line.c}>▸</span>
+            <span>
+              {line.t}
+              {isLast && <span className="caret text-prompt" />}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

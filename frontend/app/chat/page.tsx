@@ -8,10 +8,10 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { MessageBubble, type ChatMessage } from "@/components/chat/message";
 import { ScopeBar } from "@/components/chat/scope-bar";
+import { useRouter } from "next/navigation";
 import { queryApi } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
 import { useScope } from "@/lib/scope-store";
-import { usePipeline } from "@/lib/use-pipeline";
 
 const SAMPLES = [
   "summarize the key points across every document in scope",
@@ -20,12 +20,19 @@ const SAMPLES = [
   "compare the recommendations in my two most recent uploads",
 ];
 
+const SLASH: { cmd: string; desc: string }[] = [
+  { cmd: "/help", desc: "show all commands" },
+  { cmd: "/clear", desc: "wipe this conversation" },
+  { cmd: "/scope", desc: "open library to select documents" },
+  { cmd: "/summarize", desc: "summarise every doc in scope" },
+];
+
 function ChatInner() {
   const [scope] = useScope();
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const pipeline = usePipeline();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -35,7 +42,7 @@ function ChatInner() {
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, pipeline.stages]);
+  }, [messages]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -44,9 +51,50 @@ function ChatInner() {
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, [input]);
 
+  function pushSystem(content: string) {
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content,
+      at: new Date(),
+    };
+    setMessages((m) => [...m, msg]);
+  }
+
+  function handleSlash(text: string): boolean {
+    if (!text.startsWith("/")) return false;
+    const [cmd, ...rest] = text.split(/\s+/);
+    if (cmd === "/help") {
+      pushSystem(
+        "**available commands**\n\n" +
+          SLASH.map((s) => `- \`${s.cmd}\` — ${s.desc}`).join("\n")
+      );
+      setInput("");
+      return true;
+    }
+    if (cmd === "/clear") {
+      setMessages([]);
+      setInput("");
+      return true;
+    }
+    if (cmd === "/scope") {
+      router.push("/documents");
+      setInput("");
+      return true;
+    }
+    if (cmd === "/summarize") {
+      setInput("");
+      submit("summarise every document currently in scope and highlight the key themes");
+      return true;
+    }
+    void rest;
+    return false;
+  }
+
   async function submit(prompt?: string) {
     const text = (prompt ?? input).trim();
     if (!text || sending) return;
+    if (handleSlash(text)) return;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -61,19 +109,16 @@ function ChatInner() {
       role: "assistant",
       content: "",
       loading: true,
-      pipelineStages: [],
       at: new Date(),
     };
     setMessages((m) => [...m, userMsg, loadingMsg]);
     setInput("");
     setSending(true);
-    pipeline.start();
 
     try {
       const res = await queryApi.ask(text, {
         document_ids: scope.size > 0 ? [...scope] : undefined,
       });
-      const finalStages = pipeline.finish();
       setMessages((m) =>
         m.map((msg) =>
           msg.id === loadingId
@@ -82,13 +127,11 @@ function ChatInner() {
                 loading: false,
                 content: res.answer || "_(no answer generated)_",
                 sources: res.sources,
-                pipelineStages: finalStages,
               }
             : msg
         )
       );
     } catch (err) {
-      pipeline.reset();
       const detail = err instanceof ApiError ? err.detail : "something went wrong";
       setMessages((m) =>
         m.map((msg) =>
@@ -97,7 +140,6 @@ function ChatInner() {
                 ...msg,
                 loading: false,
                 content: `_error: ${detail}_`,
-                pipelineStages: undefined,
               }
             : msg
         )
@@ -108,27 +150,28 @@ function ChatInner() {
     }
   }
 
-  // keep the loading message's pipeline stages in sync while it runs
-  useEffect(() => {
-    if (!sending) return;
-    setMessages((m) =>
-      m.map((msg) =>
-        msg.loading ? { ...msg, pipelineStages: pipeline.stages } : msg
-      )
-    );
-  }, [pipeline.stages, sending]);
-
   return (
-    <div className="flex h-[calc(100vh-2.75rem)] flex-col">
+    <div className="relative flex h-[calc(100vh-2.75rem)] flex-col warp-ambient">
+      {/* subtle scanline overlay for that CRT feel */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+      />
+      {/* faint grid glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0 warp-grid opacity-[0.35]"
+      />
+
       {/* scope bar */}
-      <div className="border-b border-chrome-border bg-chrome/40 px-4 py-2.5 backdrop-blur-xl">
+      <div className="relative z-10 border-b border-chrome-border bg-chrome/60 px-4 py-2.5 backdrop-blur-xl">
         <div className="mx-auto max-w-3xl">
           <ScopeBar />
         </div>
       </div>
 
       {/* messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
           {messages.length === 0 ? (
             <EmptyState onPick={(p) => submit(p)} scopeSize={scope.size} />
@@ -139,8 +182,9 @@ function ChatInner() {
       </div>
 
       {/* input */}
-      <div className="border-t border-chrome-border bg-chrome/70 backdrop-blur-xl">
-        <div className="mx-auto max-w-3xl px-4 py-3">
+      <div className="relative z-10 border-t border-chrome-border bg-chrome/70 backdrop-blur-xl">
+        <div className="relative mx-auto max-w-3xl px-4 py-3">
+          <SlashHint input={input} onPick={(c) => { setInput(""); submit(c); }} />
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -148,7 +192,7 @@ function ChatInner() {
             }}
             className="group flex items-end gap-2 rounded-md border border-chrome-border bg-bg-raised px-3 py-2 focus-within:border-prompt/50 focus-within:shadow-prompt"
           >
-            <span className="mt-[7px] shrink-0 font-mono text-[13px] font-semibold text-prompt">
+            <span className="mt-[7px] shrink-0 font-mono text-[13px] font-semibold text-prompt drop-shadow-[0_0_6px_rgba(249,38,114,0.55)]">
               ▸
             </span>
             <textarea
@@ -179,10 +223,97 @@ function ChatInner() {
               {sending ? "…" : "SEND ↵"}
             </button>
           </form>
-          <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-faint">
-            answers cite only documents in scope · shift + return for newline
-          </p>
         </div>
+        <StatusStrip scopeSize={scope.size} sending={sending} msgCount={messages.length} />
+      </div>
+    </div>
+  );
+}
+
+function SlashHint({
+  input,
+  onPick,
+}: {
+  input: string;
+  onPick: (cmd: string) => void;
+}) {
+  if (!input.startsWith("/")) return null;
+  const q = input.toLowerCase();
+  const matches = SLASH.filter((s) => s.cmd.startsWith(q));
+  if (matches.length === 0) return null;
+  return (
+    <div className="pointer-events-auto absolute bottom-[calc(100%+2px)] left-4 right-4 mb-2 overflow-hidden rounded-md border border-chrome-border bg-bg-soft/95 shadow-block backdrop-blur animate-slide-up">
+      <div className="border-b border-chrome-border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mk-comment">
+        <span className="text-mk-pink">▸</span> slash commands
+      </div>
+      <ul>
+        {matches.map((s) => (
+          <li key={s.cmd}>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onPick(s.cmd);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-1.5 text-left font-mono text-[12px] text-ink-dim hover:bg-line/60 hover:text-ink"
+            >
+              <span className="text-mk-pink">{s.cmd}</span>
+              <span className="text-mk-comment">— {s.desc}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function StatusStrip({
+  scopeSize,
+  sending,
+  msgCount,
+}: {
+  scopeSize: number;
+  sending: boolean;
+  msgCount: number;
+}) {
+  const [now, setNow] = useState<string>("");
+  const [uptime, setUptime] = useState(0);
+  useEffect(() => {
+    const t0 = performance.now();
+    const id = setInterval(() => {
+      const d = new Date();
+      setNow(d.toLocaleTimeString([], { hour12: false }));
+      setUptime(Math.floor((performance.now() - t0) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+  const up = `${String(Math.floor(uptime / 60)).padStart(2, "0")}:${String(uptime % 60).padStart(2, "0")}`;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-chrome-border/60 bg-bg-soft/40 px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+      <div className="flex items-center gap-3">
+        <span className="flex items-center gap-1.5">
+          <span
+            className={
+              "h-1.5 w-1.5 rounded-full shadow-[0_0_6px_currentColor] " +
+              (sending ? "bg-warn text-warn animate-pulse" : "bg-ok text-ok")
+            }
+          />
+          <span className={sending ? "text-warn" : "text-ok"}>
+            {sending ? "busy" : "link ok"}
+          </span>
+        </span>
+        <span className="hidden sm:inline">
+          scope <span className="text-ink">{scopeSize || "all"}</span>
+        </span>
+        <span className="hidden sm:inline">
+          msgs <span className="text-ink">{msgCount}</span>
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="hidden md:inline">shift+↵ newline</span>
+        <span>up <span className="text-mk-green">{up}</span></span>
+        <span className="text-ink">{now}</span>
       </div>
     </div>
   );
@@ -196,55 +327,97 @@ function EmptyState({
   scopeSize: number;
 }) {
   return (
-    <div className="animate-slide-up rounded-md border border-chrome-border bg-bg-soft/70 shadow-block">
-      <div className="border-b border-chrome-border px-4 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.2em] text-ink-dim">
-        <span className="text-prompt">◆</span> lumen · ready
-        <span className="ml-3 text-ink-faint">v0.2 · rag pipeline online</span>
+    <div className="animate-slide-up overflow-hidden rounded-md border border-chrome-border bg-bg-soft/80 shadow-block">
+      <div className="flex items-center justify-between border-b border-chrome-border px-4 py-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-ink-dim">
+        <span>
+          <span className="text-prompt">◆</span> lumen · tty0
+        </span>
+        <span className="flex items-center gap-1.5 text-ink-faint normal-case tracking-normal">
+          <span className="h-1.5 w-1.5 rounded-full bg-ok animate-pulse shadow-[0_0_6px_currentColor]" />
+          <span className="text-ok">online</span>
+        </span>
       </div>
 
-      <div className="px-4 py-5 font-mono text-[13px] leading-relaxed text-ink">
-        <p className="text-ink-dim">
-          <span className="text-prompt">▸</span> booting session…
-        </p>
-        <p className="text-ink-dim">
-          <span className="text-prompt">▸</span> loaded pipeline{" "}
-          <span className="text-ink">desk → parse → embed → rank → reply</span>
-        </p>
-        <p className="text-ink-dim">
-          <span className="text-prompt">▸</span> scope ={" "}
-          {scopeSize > 0 ? (
-            <span className="text-prompt">
-              {scopeSize} document{scopeSize === 1 ? "" : "s"}
-            </span>
-          ) : (
-            <>
-              <span className="text-warn">unset</span>{" "}
-              <Link href="/documents" className="text-prompt underline underline-offset-4 decoration-prompt/40 hover:text-prompt-glow">
-                open library →
-              </Link>
-            </>
-          )}
-        </p>
+      <pre className="overflow-x-auto px-4 pt-4 font-mono text-[10px] leading-[1.1] text-prompt drop-shadow-[0_0_8px_rgba(249,38,114,0.35)]">
+{String.raw` __   _   _  __  __ ___ _  _
+| |  | | | ||  \/  | __| \| |
+| |__| |_| || |\/| | _|| .  |
+|____|\___/ |_|  |_|___|_|\_|`}
+      </pre>
+
+      <div className="px-4 pb-1 pt-1 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
+        retrieval-augmented shell · build 0.2.1
+      </div>
+
+      <div className="px-4 py-4 font-mono text-[12.5px] leading-relaxed text-ink">
+        <BootLog scopeSize={scopeSize} />
 
         <p className="mt-4 text-ink">
           <span className="text-prompt">▸</span> ask anything, or start with a sample:
         </p>
 
         <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
-          {SAMPLES.map((s) => (
+          {SAMPLES.map((s, i) => (
             <button
               key={s}
               onClick={() => onPick(s)}
               className="group flex items-start gap-2 rounded border border-chrome-border bg-bg-raised/60 px-3 py-2 text-left font-mono text-[12px] leading-relaxed text-ink-muted transition-all hover:border-prompt/40 hover:bg-prompt/[0.06] hover:text-ink"
             >
-              <span className="mt-[3px] text-prompt opacity-60 group-hover:opacity-100">
-                ▸
+              <span className="mt-[3px] text-mk-purple opacity-70 group-hover:opacity-100">
+                [{i + 1}]
               </span>
               <span>{s}</span>
             </button>
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function BootLog({ scopeSize }: { scopeSize: number }) {
+  const LINES = [
+    <>kernel <span className="text-ink">rag-4.0.0</span> loaded</>,
+    <>embedder <span className="text-mk-blue">text-emb-3</span> · dims 1536</>,
+    <>vector store <span className="text-mk-green">connected</span></>,
+    <>
+      scope ={" "}
+      {scopeSize > 0 ? (
+        <span className="text-prompt">
+          {scopeSize} document{scopeSize === 1 ? "" : "s"}
+        </span>
+      ) : (
+        <>
+          <span className="text-warn">unset</span>{" "}
+          <Link
+            href="/documents"
+            className="text-prompt underline underline-offset-4 decoration-prompt/40 hover:text-prompt-glow"
+          >
+            open library →
+          </Link>
+        </>
+      )}
+    </>,
+    <>session ready</>,
+  ];
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setN((v) => (v >= LINES.length ? v : v + 1)), 220);
+    return () => clearInterval(id);
+  }, [LINES.length]);
+  return (
+    <div className="space-y-0.5">
+      {LINES.slice(0, n).map((line, i) => (
+        <p key={i} className="text-ink-dim">
+          <span className="text-mk-green">▸</span>{" "}
+          <span className="text-ink-faint">[ok]</span> {line}
+        </p>
+      ))}
+      {n < LINES.length && (
+        <p className="text-ink-faint">
+          <span className="text-prompt">▸</span> booting<span className="caret text-prompt" />
+        </p>
+      )}
     </div>
   );
 }

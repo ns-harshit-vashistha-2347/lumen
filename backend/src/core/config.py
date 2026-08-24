@@ -94,11 +94,11 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_PATH: str = "/app/chroma_data"
 
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
-    GROQ_MODEL_SMALL: str = "llama-3.1-8b-instant"
-    GROQ_MODEL_MEDIUM: str = "llama-3.3-70b-versatile"
-    GROQ_MODEL_LARGE: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL_SMALL: str = "openai/gpt-oss-120b"
+    GROQ_MODEL_MEDIUM: str = "openai/gpt-oss-120b"
+    GROQ_MODEL_LARGE: str = "openai/gpt-oss-120b"
     QUERY_CLASSIFIER_ENABLED: bool = True
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"

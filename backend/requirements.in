@@ -16,8 +16,12 @@ langgraph
 langchain-core
 langchain-groq
 langchain-community
+<<<<<<< Updated upstream
 langchain-huggingface
 slowapi
+=======
+langchain-google-genai
+>>>>>>> Stashed changes
 langchain-text-splitters
 
 chromadb

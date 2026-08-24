@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     GROQ_MODEL_SMALL: str = "llama-3.1-8b-instant"
     GROQ_MODEL_MEDIUM: str = "llama-3.3-70b-versatile"
     GROQ_MODEL_LARGE: str = "llama-3.3-70b-versatile"
+
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL_SMALL: str = "gemini-2.0-flash-lite-001"
+    GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash-001"
+    GEMINI_MODEL_LARGE: str = "gemini-2.0-flash-001"
+
+
     QUERY_CLASSIFIER_ENABLED: bool = True
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"

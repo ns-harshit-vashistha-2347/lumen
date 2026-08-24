@@ -8,9 +8,15 @@ from src.core.db import get_db
 from src.core.deps import get_current_user
 from src.models.document import Document
 from src.models.user import User
+from src.core.llm_router import get_router
 from src.schemas.document import DocumentStatusResponse
 
 status_router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+@status_router.get("/providers")
+async def provider_health():
+    return get_router().health_snapshot()
 
 
 @status_router.get("/{document_id}/status", response_model=DocumentStatusResponse)

@@ -1,3 +1,5 @@
+import asyncio
+
 from src.core.logging import get_logger
 from src.core.vectorstore import get_collections
 from src.interfaces.base_retriever import BaseRetriever, RetrievedChunk
@@ -16,13 +18,22 @@ class DenseRetriever(BaseRetriever):
         self.embedder = get_embedder()
 
 
-    def retrieve(self, query: str, top_k: int, user_id: str | None = None, document_id: str | None = None) -> list[RetrievedChunk]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int,
+        user_id: str | None = None,
+        document_ids: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
         query_embedding = self.embedder.embed_query(query)
         conditions = []
         if user_id:
             conditions.append({"user_id": user_id})
-        if document_id:
-            conditions.append({"document_id": document_id})
+        if document_ids:
+            if len(document_ids) == 1:
+                conditions.append({"document_id": document_ids[0]})
+            else:
+                conditions.append({"document_id": {"$in": document_ids}})
 
         where = {"$and": conditions} if len(conditions) > 1 else (conditions[0] if conditions else None)
         results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k, where=where)
@@ -41,22 +52,27 @@ class DenseRetriever(BaseRetriever):
         return chunks
 
 
-def dense_retrieval_node(state: dict) -> dict:
+async def dense_retrieval_node(state: dict) -> dict:
     queries = state.get("queries") or [state["query"]]
     retrieval_k = state.get("retrieval_k", state.get("top_k", 5))
     user_id = state.get("user_id")
-    document_id = state.get("document_id")
+    document_ids = state.get("document_ids")
 
     logger.info(
-        f"[dense_retrieval_node] searching {len(queries)} query variants, retrieval_k={retrieval_k} user_id={user_id}"
+        f"[dense_retrieval_node] searching {len(queries)} query variants, "
+        f"retrieval_k={retrieval_k} user_id={user_id} document_ids={document_ids}"
     )
 
     retriever = DenseRetriever(settings.CHROMA_COLLECTION_DOCUMENTS)
 
-    per_query_results = [
-        retriever.retrieve(q, retrieval_k, user_id=user_id, document_id=document_id)
+    # embed_query + chroma.query are both blocking; run them off the event loop
+    # so concurrent requests aren't serialized behind each other.
+    per_query_results = await asyncio.gather(*[
+        asyncio.to_thread(
+            retriever.retrieve, q, retrieval_k, user_id, document_ids
+        )
         for q in queries
-    ]
+    ])
     fused = reciprocal_rank_fusion(per_query_results)[:retrieval_k]
 
     return {"dense_results": fused}

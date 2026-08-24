@@ -16,6 +16,8 @@ langgraph
 langchain-core
 langchain-groq
 langchain-community
+langchain-huggingface
+slowapi
 langchain-text-splitters
 
 chromadb

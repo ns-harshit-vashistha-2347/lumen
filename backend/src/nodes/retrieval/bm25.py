@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from rank_bm25 import BM25Okapi
@@ -55,7 +56,7 @@ class BM25Retriever(BaseRetriever):
         query: str,
         top_k: int = 5,
         user_id: str | None = None,
-        document_id: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[RetrievedChunk]:
         bm25, ids, documents, metadatas = self._get_index()
 
@@ -68,8 +69,9 @@ class BM25Retriever(BaseRetriever):
         combined = list(zip(ids, documents, metadatas, scores))
         if user_id is not None:
             combined = [row for row in combined if (row[2] or {}).get("user_id") == user_id]
-        if document_id is not None:
-            combined = [row for row in combined if (row[2] or {}).get("document_id") == document_id]
+        if document_ids:
+            allow = set(document_ids)
+            combined = [row for row in combined if (row[2] or {}).get("document_id") in allow]
 
         ranked = sorted(combined, key=lambda x: x[3], reverse=True)[:top_k]
 
@@ -84,23 +86,26 @@ class BM25Retriever(BaseRetriever):
         ]
 
 
-def bm25_retrieval_node(state: dict) -> dict:
+async def bm25_retrieval_node(state: dict) -> dict:
     from src.nodes.retrieval.fusion import reciprocal_rank_fusion
 
     queries = state.get("queries") or [state["query"]]
     retrieval_k = state.get("retrieval_k", state.get("top_k", 5))
     user_id = state.get("user_id")
-    document_id = state.get("document_id")
+    document_ids = state.get("document_ids")
     logger.info(
-        f"[bm25_retrieval_node] searching {len(queries)} query variants, retrieval_k={retrieval_k} user_id={user_id}"
+        f"[bm25_retrieval_node] searching {len(queries)} query variants, "
+        f"retrieval_k={retrieval_k} user_id={user_id} document_ids={document_ids}"
     )
 
     retriever = BM25Retriever(settings.CHROMA_COLLECTION_DOCUMENTS)
 
-    per_query_results = [
-        retriever.retrieve(q, retrieval_k, user_id=user_id, document_id=document_id)
+    per_query_results = await asyncio.gather(*[
+        asyncio.to_thread(
+            retriever.retrieve, q, retrieval_k, user_id, document_ids
+        )
         for q in queries
-    ]
+    ])
     fused = reciprocal_rank_fusion(per_query_results)[:retrieval_k]
 
     return {"bm25_results": fused}

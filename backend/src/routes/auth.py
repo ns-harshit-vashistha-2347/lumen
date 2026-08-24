@@ -1,9 +1,12 @@
+import secrets
 import urllib.parse
 from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+
+from src.core.rate_limit import limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +42,8 @@ async def _issue_token_pair(user: User, db: AsyncSession) -> TokenPair:
 
 
 @auth_router.post("/signup", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
-async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def signup(request: Request, payload: SignupRequest, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(User).where(User.email == payload.email.lower()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email is already registered")
@@ -58,7 +62,8 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
 
 
 @auth_router.post("/login", response_model=TokenPair)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
 
@@ -113,10 +118,15 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
+OAUTH_STATE_COOKIE = "oauth_state"
+OAUTH_STATE_TTL_SECONDS = 600
+
+
 @auth_router.get("/google/login")
 async def google_login():
     if not settings.GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    state = secrets.token_urlsafe(32)
     params = {
         "response_type": "code",
         "client_id": settings.GOOGLE_CLIENT_ID,
@@ -124,8 +134,18 @@ async def google_login():
         "scope": "openid email profile",
         "access_type": "offline",
         "prompt": "consent",
+        "state": state,
     }
-    return RedirectResponse(f"{GOOGLE_AUTHZ_URL}?{urllib.parse.urlencode(params)}")
+    response = RedirectResponse(f"{GOOGLE_AUTHZ_URL}?{urllib.parse.urlencode(params)}")
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state,
+        max_age=OAUTH_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.ENV != "local",
+        samesite="lax",
+    )
+    return response
 
 
 @auth_router.get("/google/callback")
@@ -133,6 +153,13 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     code = request.query_params.get("code")
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    received_state = request.query_params.get("state")
+    expected_state = request.cookies.get(OAUTH_STATE_COOKIE)
+    if not received_state or not expected_state or not secrets.compare_digest(
+        received_state, expected_state
+    ):
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     async with httpx.AsyncClient(timeout=15) as client:
         token_resp = await client.post(
@@ -189,9 +216,11 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
             await db.commit()
 
     tokens = await _issue_token_pair(user, db)
-    
+
     redirect_target = (
         f"{settings.FRONTEND_URL}/auth/callback"
         f"#access_token={tokens.access_token}&refresh_token={tokens.refresh_token}"
     )
-    return RedirectResponse(redirect_target)
+    response = RedirectResponse(redirect_target)
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    return response

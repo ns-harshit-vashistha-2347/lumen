@@ -378,7 +378,7 @@ function EmptyState({
 function BootLog({ scopeSize }: { scopeSize: number }) {
   const LINES = [
     <>kernel <span className="text-ink">rag-4.0.0</span> loaded</>,
-    <>embedder <span className="text-mk-blue">text-emb-3</span> · dims 1536</>,
+    <>embedder <span className="text-mk-blue">bge-large-en-v1.5</span> · dims 1024</>,
     <>vector store <span className="text-mk-green">connected</span></>,
     <>
       scope ={" "}

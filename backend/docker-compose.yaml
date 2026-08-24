@@ -47,12 +47,15 @@ services:
     restart: unless-stopped
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn main:app --host 0.0.0.0 --port 8080 --workers 4"
+             uvicorn main:app --host 0.0.0.0 --port 8080 --workers 2"
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       CHROMA_HOST: chromadb
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - .:/app
       - uploads_data:/data/uploads
@@ -80,6 +83,9 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       CHROMA_HOST: chromadb
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - .:/app
       - uploads_data:/data/uploads
@@ -105,6 +111,9 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       CHROMA_HOST: chromadb
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "5555:5555"
     depends_on:

@@ -29,6 +29,9 @@ class QueryState(TypedDict, total=False):
     query: str
     top_k: int
 
+    user_id: str | None
+    document_ids: list[str] | None
+
     primary_query: str
     queries: list[str]
 

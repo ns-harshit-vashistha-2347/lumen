@@ -39,18 +39,31 @@ async def upload_document(
     stored_filename = f"{document_id}{ext}"
     file_path = os.path.join(settings.UPLOAD_DIR, stored_filename)
 
-    contents = await file.read()
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    if len(contents) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds max upload size of {settings.MAX_UPLOAD_SIZE_MB}MB",
-        )
-    if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    chunk_size = 1024 * 1024  # 1 MiB
+    total = 0
+    try:
+        with open(file_path, "wb") as f:
+            while chunk := await file.read(chunk_size):
+                total += len(chunk)
+                if total > max_bytes:
+                    f.close()
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds max upload size of {settings.MAX_UPLOAD_SIZE_MB}MB",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise
 
-    with open(file_path, "wb") as f:
-        f.write(contents)
+    if total == 0:
+        os.remove(file_path)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     doc = Document(
         id=document_id,

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.core.deps import get_current_user
 from src.core.logging import get_logger
+from src.core.rate_limit import limiter
 from src.graphs.query_graph import query_graph, retrieval_graph
 from src.models.user import User
 from src.schemas.document import QueryRequest, QueryResponse, SourceChunk
@@ -17,7 +18,12 @@ logger = get_logger(__name__)
 
 
 @query_router.post("", response_model=QueryResponse)
-async def run_query(payload: QueryRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def run_query(
+    request: Request,
+    payload: QueryRequest,
+    current_user: User = Depends(get_current_user),
+):
     logger.info(
         f"[/query] user_id={current_user.id} query='{payload.query[:60]}' top_k={payload.top_k}"
     )
@@ -27,12 +33,18 @@ async def run_query(payload: QueryRequest, current_user: User = Depends(get_curr
         logger.info(f"[/query] cache hit user_id={current_user.id}")
         return QueryResponse(**cached)
 
-    result = await query_graph.ainvoke({
-        "query": payload.query,
-        "top_k": payload.top_k,
-        "user_id": str(current_user.id),
-        "document_id": str(payload.document_id) if payload.document_id else None,
-    })
+    try:
+        result = await query_graph.ainvoke({
+            "query": payload.query,
+            "top_k": payload.top_k,
+            "user_id": str(current_user.id),
+            "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
+        })
+    except Exception as exc:
+        logger.exception(
+            f"[/query] graph execution failed user_id={current_user.id}: {exc}"
+        )
+        raise HTTPException(status_code=500, detail="Query pipeline failed") from exc
 
     source_chunks = (
         result.get("compressed_results")
@@ -59,7 +71,7 @@ async def run_query_stream(payload: QueryRequest, current_user: User = Depends(g
         "query": payload.query,
         "top_k": payload.top_k,
         "user_id": str(current_user.id),
-        "document_id": str(payload.document_id) if payload.document_id else None,
+        "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
     })
     chunks = _pick_chunks(partial)
     context = _build_context(chunks)

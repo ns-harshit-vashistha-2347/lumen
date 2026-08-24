@@ -1,0 +1,33 @@
+# Overlay that enables NVIDIA GPU access for the backend and ingestion worker.
+# Usage on a host with the NVIDIA Container Toolkit installed:
+#   docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d
+#
+# Requires:
+#   - NVIDIA driver on host
+#   - nvidia-container-toolkit installed
+#   - A CUDA-enabled base image (swap python:3.11-slim for pytorch/pytorch:2.x-cuda12.1-cudnn8-runtime
+#     in Dockerfile) OR ensure your torch wheel supports CUDA at runtime.
+services:
+  backend:
+    environment:
+      RERANK_DEVICE: cuda
+      EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  celery_worker_ingestion:
+    environment:
+      RERANK_DEVICE: cuda
+      EMBEDDING_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

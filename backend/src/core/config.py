@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     QUERY_CLASSIFIER_ENABLED: bool = True
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
+    # "" = auto-detect (cuda > mps > cpu). Override with "cuda" | "mps" | "cpu".
+    EMBEDDING_DEVICE: str = ""
 
     UPLOAD_DIR: str = "/data/uploads"
 
@@ -74,9 +76,13 @@ class Settings(BaseSettings):
 
 
     RERANK_ENABLED: bool = True
-    RERANK_MODEL: str = "BAAI/bge-reranker-v2-m3"
-    RERANK_CANDIDATE_POOL: int = 12
+    RERANK_MODEL: str = "BAAI/bge-reranker-base"
+    RERANK_CANDIDATE_POOL: int = 8
     RERANK_TOP_N: int = 5
+    RERANK_BATCH_SIZE: int = 32
+    RERANK_MAX_LENGTH: int = 512
+    # "" = auto-detect (cuda > mps > cpu). Override with "cuda" | "mps" | "cpu".
+    RERANK_DEVICE: str = ""
 
 
     BM25_CACHE_TTL_SECONDS: int = 300
@@ -84,7 +90,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
 
     QUERY_REWRITE_ENABLED: bool = True
-    QUERY_EXPANSION_COUNT: int = 1
+    QUERY_EXPANSION_COUNT: int = 0  # 0 = only the LLM-cleaned "primary" + raw
 
     COMPRESSION_ENABLED: bool = True
     COMPRESSION_MIN_CHARS: int = 4000

@@ -97,7 +97,7 @@ const TRACE_LINES: { c: string; t: string }[] = [
   { c: "text-mk-blue",   t: "opening secure channel to lumen://rag" },
   { c: "text-mk-green",  t: "handshake ok · encryption AES-256" },
   { c: "text-ink-dim",   t: "resolving scope graph…" },
-  { c: "text-mk-purple", t: "seeding embedder · text-emb-3" },
+  { c: "text-mk-purple", t: "seeding embedder · bge-large-en-v1.5" },
   { c: "text-ink-dim",   t: "ranking neighbours · cosine ↑" },
   { c: "text-mk-yellow", t: "assembling context window" },
   { c: "text-prompt",    t: "streaming inference…" },

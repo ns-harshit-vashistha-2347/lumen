@@ -28,7 +28,7 @@ class DocumentStatusResponse(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 5
-    document_id: uuid.UUID | None = None
+    document_ids: list[uuid.UUID] | None = None
 
 
 class SourceChunk(BaseModel):

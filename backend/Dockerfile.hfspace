@@ -1,0 +1,28 @@
+# Dockerfile for Hugging Face Spaces deployment.
+# One container, port 7860, runs migrations + celery + uvicorn together.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.in .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.in
+
+# HF Spaces workspace + persistent model cache location.
+ENV HF_HOME=/app/.cache/huggingface \
+    CHROMA_MODE=embedded \
+    CHROMA_PERSIST_PATH=/app/chroma_data
+
+COPY . .
+RUN chmod +x entrypoint.sh \
+    && mkdir -p /data/uploads /app/chroma_data /app/.cache/huggingface
+
+EXPOSE 7860
+
+CMD ["./entrypoint.sh"]

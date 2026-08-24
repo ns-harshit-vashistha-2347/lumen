@@ -6,7 +6,11 @@ from src.core.config import settings
 
 
 @lru_cache()
-def get_chroma_client() -> chromadb.Client:
+def get_chroma_client():
+    """HTTP client for local docker-compose, PersistentClient for
+    single-container deployments (e.g. Hugging Face Spaces)."""
+    if settings.CHROMA_MODE == "embedded":
+        return chromadb.PersistentClient(path=settings.CHROMA_PERSIST_PATH)
     return chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
 
 

@@ -1,0 +1,21 @@
+# Caddy config. Read at startup by the caddy container.
+#
+# {$DOMAIN} is substituted from the DOMAIN env var (from .env).
+# Caddy automatically:
+#   - listens on :80 and :443
+#   - fetches a Let's Encrypt cert for {$DOMAIN} on first boot
+#   - renews it every 60 days
+#   - redirects http -> https
+#
+# reverse_proxy hands the request off to the FastAPI container.
+# "backend:8080" resolves via Docker's internal DNS to the backend service.
+
+{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy backend:8080 {
+        # forward the real client IP so slowapi rate-limit sees it
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

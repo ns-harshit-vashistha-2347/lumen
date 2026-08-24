@@ -1,0 +1,29 @@
+# Overlay compose file. Adds a Caddy reverse proxy in front of `backend`
+# for automatic HTTPS via Let's Encrypt.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.caddy.yaml up -d --build
+#
+# Requires:
+#   - DOMAIN=lumen-xyz.duckdns.org in .env
+#   - Ports 80 and 443 open to the internet (Oracle Security List + iptables)
+#   - DNS: DOMAIN must resolve to this VM's public IP
+services:
+  caddy:
+    image: caddy:2
+    container_name: world_caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  caddy_config:

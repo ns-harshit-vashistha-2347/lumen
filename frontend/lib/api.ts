@@ -91,7 +91,24 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     let detail = res.statusText;
     try {
       const err = await res.json();
-      detail = err.detail || err.message || detail;
+      const raw = err.detail ?? err.message ?? detail;
+      // FastAPI 422 returns `detail` as an array of {loc, msg, type};
+      // flatten it so callers don't render "[object Object]".
+      if (Array.isArray(raw)) {
+        detail = raw
+          .map((e: { msg?: string; loc?: (string | number)[] }) => {
+            if (e && typeof e === "object" && "msg" in e) {
+              const loc = Array.isArray(e.loc) ? e.loc.slice(1).join(".") : "";
+              return loc ? `${loc}: ${e.msg}` : String(e.msg);
+            }
+            return typeof e === "string" ? e : JSON.stringify(e);
+          })
+          .join("; ");
+      } else if (typeof raw === "string") {
+        detail = raw;
+      } else if (raw != null) {
+        detail = JSON.stringify(raw);
+      }
     } catch {
       // ignore
     }

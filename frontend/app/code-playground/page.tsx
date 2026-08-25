@@ -686,7 +686,7 @@ function ConnectRepoDialog({
           >
             cancel
           </button>
-          {phase !== "confirming" ? (
+          {phase !== "confirming" && phase !== "connecting" ? (
             <button
               onClick={runPreview}
               disabled={!url.trim() || phase === "previewing"}

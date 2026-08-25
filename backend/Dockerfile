@@ -25,7 +25,7 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 # only runtime deps, not build-essential/git (those were only needed to build wheels)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends git \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

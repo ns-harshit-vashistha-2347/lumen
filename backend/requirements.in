@@ -44,3 +44,10 @@ email-validator
 argon2-cffi
 
 pdfplumber
+
+gitpython
+tree-sitter
+tree-sitter-language-pack
+cryptography
+
+kuzu

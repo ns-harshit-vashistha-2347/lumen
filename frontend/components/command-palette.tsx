@@ -100,6 +100,18 @@ export function CommandPalette() {
         },
       },
       {
+        id: "nav-code",
+        label: "open code playground",
+        hint: "/code-playground",
+        section: "nav",
+        icon: <Zap className="h-3.5 w-3.5 text-mk-yellow" />,
+        keywords: "repos github codebase",
+        run: () => {
+          router.push("/code-playground");
+          close();
+        },
+      },
+      {
         id: "act-upload",
         label: "upload documents",
         hint: "jump to library",

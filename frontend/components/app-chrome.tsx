@@ -37,6 +37,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const TABS = [
   { href: "/chat", label: "chat" },
   { href: "/documents", label: "library" },
+  { href: "/code-playground", label: "code" },
 ];
 
 export function AppChrome() {

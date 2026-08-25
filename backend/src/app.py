@@ -13,11 +13,18 @@ from src.routes.auth import auth_router
 from src.routes.documents import document_router
 from src.routes.query import query_router
 from src.routes.status import status_router
+from src.routes.repos import repos_router
+from src.routes.code_query import code_query_router
+from src.routes.webhooks import webhook_router
+
+from src.core.fallback_middleware import LLMFallbackMiddleware
+
 from src.nodes.ingestion.embed import get_embedder
 from src.nodes.retrieval.rerank import get_reranker
 
 setup_logging()
 logger = get_logger(__name__)
+
 
 
 @asynccontextmanager
@@ -35,6 +42,8 @@ app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(LLMFallbackMiddleware)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,12 +51,16 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-LLM-Fallback"],
 )
 
 app.include_router(auth_router)
 app.include_router(document_router)
 app.include_router(status_router)
 app.include_router(query_router)
+app.include_router(repos_router)
+app.include_router(code_query_router)
+app.include_router(webhook_router)
 
 
 @app.get("/health")

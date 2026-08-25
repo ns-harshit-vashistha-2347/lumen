@@ -60,6 +60,7 @@ services:
       - .:/app
       - uploads_data:/data/uploads
       - hf_cache:/root/.cache/huggingface
+      - kuzu_data:/data/kuzu
     ports:
       - "8080:8080"
     depends_on:
@@ -90,6 +91,8 @@ services:
       - .:/app
       - uploads_data:/data/uploads
       - hf_cache:/root/.cache/huggingface
+      - repo_clones:/data/repos
+      - kuzu_data:/data/kuzu
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,3 +128,5 @@ volumes:
   chroma_data:
   uploads_data:
   hf_cache:
+  repo_clones:
+  kuzu_data:

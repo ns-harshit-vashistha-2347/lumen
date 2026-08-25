@@ -51,6 +51,42 @@ class Settings(BaseSettings):
     # Upstash free tier is single-DB, so DB indices are ignored anyway.
     REDIS_URL_OVERRIDE: str = ""
 
+    REPO_CLONE_DIR: str = "/data/repos"           # temp clone workspace
+    REPO_MAX_SIZE_MB: int = 500                    # v2.0 default cap (Pro)
+    REPO_MAX_FILES: int = 50_000
+    REPO_MAX_FILE_SIZE_MB: int = 1                 # per-file cap
+    REPO_CLONE_TIMEOUT_SECONDS: int = 600
+    REPO_COLLECTION_PREFIX: str = "repo_"          # Chroma per-repo namespace
+
+    REPO_TOKEN_ENCRYPTION_KEY: str = ""
+
+    REPO_IGNORED_DIRS: str = (
+        "node_modules,dist,build,.git,.next,.nuxt,.venv,venv,__pycache__,"
+        ".pytest_cache,.mypy_cache,target,vendor,.gradle,.idea,.vscode,coverage,.tox"
+    )
+    REPO_IGNORED_SUFFIXES: str = (
+        ".lock,.min.js,.min.css,.map,.png,.jpg,.jpeg,.gif,.svg,.ico,.webp,.pdf,"
+        ".zip,.tar,.gz,.mp4,.mp3,.wav,.woff,.woff2,.ttf,.eot,.class,.jar,.so,.dll,"
+        ".exe,.bin,.wasm,.pyc,.pyo"
+    )
+    REPO_INDEXABLE_EXTENSIONS: str = (
+        ".py,.js,.jsx,.ts,.tsx,.go,.java,.rs,.rb,.php,.c,.cc,.cpp,.h,.hpp,"
+        ".cs,.swift,.kt,.scala,.md,.rst,.txt,.json,.yaml,.yml,.toml,.sh,.sql"
+    )
+
+
+    @property
+    def repo_ignored_dirs(self) -> frozenset[str]:
+        return frozenset(s.strip() for s in self.REPO_IGNORED_DIRS.split(",") if s.strip())
+
+    @property
+    def repo_ignored_suffixes(self) -> frozenset[str]:
+        return frozenset(s.strip().lower() for s in self.REPO_IGNORED_SUFFIXES.split(",") if s.strip())
+
+    @property
+    def repo_indexable_extensions(self) -> frozenset[str]:
+        return frozenset(s.strip().lower() for s in self.REPO_INDEXABLE_EXTENSIONS.split(",") if s.strip())
+
     @property
     def SYNC_POSTGRES_URL_STR(self) -> str:
         if self.POSTGRES_URL_OVERRIDE:
@@ -96,9 +132,22 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "openai/gpt-oss-120b"
 
+<<<<<<< HEAD
     GROQ_MODEL_SMALL: str = "openai/gpt-oss-120b"
     GROQ_MODEL_MEDIUM: str = "openai/gpt-oss-120b"
     GROQ_MODEL_LARGE: str = "openai/gpt-oss-120b"
+=======
+    GROQ_MODEL_SMALL: str = "llama-3.1-8b-instant"
+    GROQ_MODEL_MEDIUM: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL_LARGE: str = "llama-3.3-70b-versatile"
+
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL_SMALL: str = "gemini-2.0-flash-lite-001"
+    GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash-001"
+    GEMINI_MODEL_LARGE: str = "gemini-2.0-flash-001"
+
+
+>>>>>>> add-codebase
     QUERY_CLASSIFIER_ENABLED: bool = True
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
@@ -152,6 +201,10 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     MMR_ENABLED: bool = True
+
+    KUZU_DIR: str = "/data/kuzu"
+    CODE_QUERY_TOP_K: int = 8
+    CODE_GRAPH_MAX_SYMBOL_MATCHES: int = 20
 
     @property
     def allowed_extensions(self) -> frozenset[str]:

@@ -1,4 +1,5 @@
 from src.models.user import User, RefreshToken, AuthProvider
 from src.models.document import Document, DocumentStatus
+from src.models.repo import Repo, RepoFile, RepoStatus
 
-__all__ = ["User", "RefreshToken", "AuthProvider", "Document", "DocumentStatus"]
+__all__ = ["User", "RefreshToken", "AuthProvider", "Document", "DocumentStatus","Repo", "RepoFile", "RepoStatus",]

@@ -39,10 +39,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await authApi.me();
       setUser(me);
     } catch (err) {
+      // On 401 the token is invalid → clear and go to login.
+      // On any other failure (network down, 5xx, CORS) we must not leave the
+      // app stuck on the boot splash — surface it by routing to /login too,
+      // where the user can retry once the backend is reachable.
       if (err instanceof ApiError && err.status === 401) {
         tokenStore.clear();
-        router.replace("/login");
       }
+      setUser(null);
+      router.replace("/login");
     } finally {
       setLoading(false);
     }

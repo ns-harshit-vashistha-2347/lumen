@@ -25,8 +25,8 @@ export default function OAuthCallbackPage() {
   return (
     <div className="flex min-h-screen items-center justify-center">
       <div className="flex flex-col items-center gap-3">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        <p className="text-sm text-text-muted">Signing you in…</p>
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-prompt border-t-transparent" />
+        <p className="text-sm text-ink-dim">Signing you in…</p>
       </div>
     </div>
   );

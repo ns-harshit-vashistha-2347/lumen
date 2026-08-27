@@ -16,10 +16,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    chatkind = sa.Enum("doc", "code", name="chatkind")
-    chatkind.create(op.get_bind(), checkfirst=True)
-    chatrole = sa.Enum("user", "assistant", name="chatrole")
-    chatrole.create(op.get_bind(), checkfirst=True)
+    # create_type=False on the columns below prevents SQLAlchemy from
+    # re-issuing CREATE TYPE when it emits the table DDL — we create the
+    # enums explicitly with checkfirst=True right here.
+    chatkind = postgresql.ENUM("doc", "code", name="chatkind", create_type=False)
+    chatrole = postgresql.ENUM("user", "assistant", name="chatrole", create_type=False)
+    sa.Enum("doc", "code", name="chatkind").create(op.get_bind(), checkfirst=True)
+    sa.Enum("user", "assistant", name="chatrole").create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "chat_sessions",

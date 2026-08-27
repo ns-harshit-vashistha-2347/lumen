@@ -43,8 +43,17 @@ class Repo(Base):
     
     encrypted_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # values_callable so the DB sees `pending`/`cloning`/... rather than the
+    # Python member names `PENDING`/`CLONING`/... which don't match the enum
+    # values declared in the migration.
     status: Mapped[RepoStatus] = mapped_column(
-        Enum(RepoStatus, name="repostatus"), nullable=False, default=RepoStatus.PENDING
+        Enum(
+            RepoStatus,
+            name="repostatus",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+        default=RepoStatus.PENDING,
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

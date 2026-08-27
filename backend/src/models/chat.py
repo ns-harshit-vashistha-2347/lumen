@@ -11,6 +11,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.core.db import Base
 
 
+# SQLAlchemy's PG native Enum sends `enum.name` by default, but the DB
+# type was created with `enum.value` (lowercase). Force it to use `.value`
+# on both sides so INSERTs match and SELECTs deserialize.
+def _enum_values(e):
+    return [m.value for m in e]
+
+
 class ChatKind(enum.Enum):
     DOC = "doc"      # /query — RAG over user documents
     CODE = "code"    # /code-query — RAG over a specific repo
@@ -28,7 +35,10 @@ class ChatSession(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    kind: Mapped[ChatKind] = mapped_column(Enum(ChatKind, name="chatkind"), nullable=False)
+    kind: Mapped[ChatKind] = mapped_column(
+        Enum(ChatKind, name="chatkind", values_callable=_enum_values),
+        nullable=False,
+    )
     # Non-null for CODE sessions; NULL for DOC sessions.
     repo_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("repos.id", ondelete="CASCADE"), nullable=True, index=True
@@ -56,7 +66,10 @@ class ChatMessage(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    role: Mapped[ChatRole] = mapped_column(Enum(ChatRole, name="chatrole"), nullable=False)
+    role: Mapped[ChatRole] = mapped_column(
+        Enum(ChatRole, name="chatrole", values_callable=_enum_values),
+        nullable=False,
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # Freeform payload: sources[], graph_hits[], intent, trace_id — anything the
     # UI wants to render alongside the message.

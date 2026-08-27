@@ -22,7 +22,8 @@ logger = get_logger(__name__)
 
 TRACE_TTL_SECONDS = 60 * 60  # 1h — traces are a debugging aid, not history
 
-_MAX_PREVIEW_LEN = 800
+_MAX_PREVIEW_LEN = 1200
+_MAX_LIST_PREVIEW = 3   # for list values, show a preview of up to N items
 
 
 def new_trace_id() -> str:
@@ -33,25 +34,69 @@ def _trace_key(trace_id: str) -> str:
     return f"graph_trace:{trace_id}"
 
 
-def _preview(value: Any) -> str:
-    """Compact human-readable preview of an arbitrary node output."""
+def _item_preview(item: Any) -> str:
+    """Render one item inside a list — chunks, dicts, or primitives — as a
+    short, human-readable line."""
     try:
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            s = str(value)
-        elif isinstance(value, list):
-            s = f"[list len={len(value)}]"
-            if value and hasattr(value[0], "content"):
-                first = getattr(value[0], "content", "")[:200]
-                s += f" first.content={first!r}"
-            elif value:
-                s += f" first={value[0]!r}"[:200]
-        elif isinstance(value, dict):
-            s = json.dumps({k: _preview(v) for k, v in list(value.items())[:8]}, default=str)
-        else:
-            s = repr(value)
+        if hasattr(item, "content"):
+            meta = getattr(item, "metadata", {}) or {}
+            score = getattr(item, "score", None)
+            label_bits: list[str] = []
+            src = meta.get("source") or meta.get("path")
+            if src:
+                label_bits.append(str(src))
+            page = meta.get("page_number") or meta.get("page")
+            if page:
+                label_bits.append(f"p{page}")
+            sl, el = meta.get("start_line"), meta.get("end_line")
+            if sl and el:
+                label_bits.append(f"L{sl}-{el}")
+            sym = meta.get("symbol_name")
+            if sym:
+                label_bits.append(str(sym))
+            if score is not None:
+                label_bits.append(f"score={float(score):.3f}")
+            head = " · ".join(label_bits) if label_bits else "chunk"
+            body = (getattr(item, "content", "") or "")[:400]
+            return f"[{head}]\n{body}"
+        if isinstance(item, dict):
+            return json.dumps(item, default=str)[:400]
+        if isinstance(item, str):
+            return item[:400]
+        return repr(item)[:400]
     except Exception:
-        s = "<unrepresentable>"
-    return s[:_MAX_PREVIEW_LEN]
+        return "<unrepresentable>"
+
+
+def _preview(value: Any) -> str:
+    """Compact human-readable preview of an arbitrary node output value."""
+    try:
+        if value is None:
+            return "null"
+        if isinstance(value, str):
+            return value[:_MAX_PREVIEW_LEN]
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, list):
+            n = len(value)
+            if n == 0:
+                return "[empty list]"
+            sample = value[:_MAX_LIST_PREVIEW]
+            lines = [f"list · len={n}"]
+            for i, itm in enumerate(sample):
+                lines.append(f"  #{i + 1} {_item_preview(itm)}")
+            if n > len(sample):
+                lines.append(f"  … +{n - len(sample)} more")
+            return "\n".join(lines)[:_MAX_PREVIEW_LEN]
+        if isinstance(value, dict):
+            return json.dumps(
+                {k: _preview(v) for k, v in list(value.items())[:8]},
+                default=str,
+                indent=2,
+            )[:_MAX_PREVIEW_LEN]
+        return repr(value)[:_MAX_PREVIEW_LEN]
+    except Exception:
+        return "<unrepresentable>"
 
 
 def _record(trace_id: str, event: dict) -> None:

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -41,6 +41,65 @@ const SAMPLES = [
   "explain how retrieval fusion works",
   "what does src/app.py import?",
 ];
+
+const CODE_MD_COMPONENTS: Components = {
+  table: ({ children, ...props }) => (
+    <div className="my-2 overflow-x-auto rounded border border-chrome-border/60">
+      <table className="w-full border-collapse text-[12px]" {...props}>
+        {children}
+      </table>
+    </div>
+  ),
+  th: ({ children, ...props }) => (
+    <th
+      className="border-b border-chrome-border/60 bg-bg-raised/60 px-2 py-1 text-left text-ink"
+      {...props}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children, ...props }) => (
+    <td className="border-b border-chrome-border/40 px-2 py-1 align-top text-ink-dim" {...props}>
+      {children}
+    </td>
+  ),
+  pre: ({ children, ...props }) => (
+    <pre
+      className="my-2 max-h-96 overflow-auto rounded border border-chrome-border/60 bg-bg/70 p-2 text-[11.5px] leading-snug"
+      {...props}
+    >
+      {children}
+    </pre>
+  ),
+  code: ({ inline, className, children, ...props }: {
+    inline?: boolean;
+    className?: string;
+    children?: ReactNode;
+  }) =>
+    inline ? (
+      <code
+        className="rounded bg-bg-raised/70 px-1 py-[1px] font-mono text-[12px] text-mk-yellow"
+        {...props}
+      >
+        {children}
+      </code>
+    ) : (
+      <code className={cn("font-mono", className)} {...props}>
+        {children}
+      </code>
+    ),
+  hr: () => (
+    <hr className="my-3 border-0 border-t border-chrome-border/40" />
+  ),
+  p: ({ children }) => (
+    <p className="my-1.5 leading-relaxed">{children}</p>
+  ),
+  ul: ({ children }) => <ul className="my-1.5 ml-4 list-disc space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="my-1.5 ml-4 list-decimal space-y-0.5">{children}</ol>,
+  h1: ({ children }) => <h3 className="mt-3 mb-1 text-[15px] font-semibold text-ink">{children}</h3>,
+  h2: ({ children }) => <h3 className="mt-3 mb-1 text-[14px] font-semibold text-ink">{children}</h3>,
+  h3: ({ children }) => <h4 className="mt-3 mb-1 text-[13px] font-semibold text-ink">{children}</h4>,
+};
 
 type CodeMessage = {
   id: string;
@@ -615,8 +674,8 @@ function CodeBubble({ message }: { message: CodeMessage }) {
             vectors<span className="caret text-prompt" />
           </p>
         ) : (
-          <div className="prose prose-invert max-w-none font-mono text-[13px] leading-relaxed">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+          <div className="prose prose-invert min-w-0 max-w-none font-mono text-[13px] leading-relaxed text-ink">
+            <ReactMarkdown components={CODE_MD_COMPONENTS}>{message.content}</ReactMarkdown>
           </div>
         )}
 

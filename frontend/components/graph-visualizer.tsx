@@ -23,7 +23,10 @@ interface Props {
   title?: string;
 }
 
-// Simple layered layout: BFS from START, place each layer on a horizontal band.
+// Layered top-down layout. A node's layer is (max layer of any parent) + 1
+// so diamonds like `rewrite → {dense, bm25} → fusion` render as a proper
+// diamond instead of stacking on top of each other. Layers are centered so
+// wide rows aren't shoved to the left.
 function layout(structure: GraphStructure) {
   const adj = new Map<string, string[]>();
   const rev = new Map<string, string[]>();
@@ -31,43 +34,52 @@ function layout(structure: GraphStructure) {
     adj.set(e.source, [...(adj.get(e.source) || []), e.target]);
     rev.set(e.target, [...(rev.get(e.target) || []), e.source]);
   });
-  const layers: string[][] = [];
-  const seen = new Set<string>();
-  const start =
-    structure.nodes.find((n) => n.id === "__start__") || structure.nodes[0];
-  if (!start) return { positions: new Map(), layers: [] };
-  let frontier = [start.id];
-  seen.add(start.id);
-  while (frontier.length) {
-    layers.push(frontier);
-    const next: string[] = [];
-    frontier.forEach((n) => {
-      (adj.get(n) || []).forEach((t) => {
-        if (!seen.has(t)) {
-          seen.add(t);
-          next.push(t);
-        }
-      });
-    });
-    frontier = next;
-  }
-  // Any nodes we didn't reach (rare) — dump at the end
+
+  const startId =
+    structure.nodes.find((n) => n.id === "__start__")?.id || structure.nodes[0]?.id;
+  if (!startId) return { positions: new Map(), layers: [] as string[][] };
+
+  // Topological layering: layer(n) = max(layer(parents)) + 1, layer(start)=0.
+  // Fall back to BFS depth if there's a cycle (LangGraph loops).
+  const depth = new Map<string, number>();
+  depth.set(startId, 0);
+  const visiting = new Set<string>();
+  const compute = (id: string): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (visiting.has(id)) return 0; // cycle guard
+    visiting.add(id);
+    const parents = rev.get(id) || [];
+    const d = parents.length
+      ? Math.max(...parents.map(compute)) + 1
+      : 0;
+    depth.set(id, d);
+    visiting.delete(id);
+    return d;
+  };
+  structure.nodes.forEach((n) => compute(n.id));
+
+  const maxDepth = Math.max(0, ...Array.from(depth.values()));
+  const layers: string[][] = Array.from({ length: maxDepth + 1 }, () => []);
+  // Preserve node insertion order within a layer so sibling columns don't
+  // jitter between renders.
   structure.nodes.forEach((n) => {
-    if (!seen.has(n.id)) {
-      layers.push([n.id]);
-      seen.add(n.id);
-    }
+    const d = depth.get(n.id);
+    if (d != null) layers[d].push(n.id);
   });
 
   const positions = new Map<string, { x: number; y: number }>();
-  const colW = 170;
-  const rowH = 68;
-  const marginX = 40;
+  const colW = 150;
+  const rowH = 70;
   const marginY = 30;
+  const maxCols = Math.max(1, ...layers.map((row) => row.length));
+  const totalWidth = maxCols * colW;
+
   layers.forEach((row, li) => {
+    const rowWidth = row.length * colW;
+    const offsetX = (totalWidth - rowWidth) / 2 + 40;
     row.forEach((id, ci) => {
       positions.set(id, {
-        x: marginX + ci * colW,
+        x: offsetX + ci * colW,
         y: marginY + li * rowH,
       });
     });
@@ -105,10 +117,22 @@ export function GraphVisualizer({
         if (traceId) {
           const t = await graphApi.trace(traceId);
           setTrace(t);
-          const lastNode = [...(t.events || [])]
+          // Prefer generation (most informative), else the last node that
+          // actually produced output, else the last node overall.
+          const nodeEvents = (t.events || []).filter((e) => e.type === "node");
+          const gen = nodeEvents.find(
+            (e) => e.node === "generation" || e.node === "regenerate"
+          );
+          const withOutput = [...nodeEvents]
             .reverse()
-            .find((e) => e.type === "node");
-          setSelectedStep(lastNode?.step ?? null);
+            .find(
+              (e) =>
+                e.output_preview &&
+                Object.keys(e.output_preview).length > 0
+            );
+          setSelectedStep(
+            gen?.step ?? withOutput?.step ?? nodeEvents.at(-1)?.step ?? null
+          );
         } else {
           setTrace(null);
           setSelectedStep(null);
@@ -203,7 +227,12 @@ export function GraphVisualizer({
               </div>
             )}
             {structure && !loading && !err && (
-              <svg width={width} height={height} className="max-w-full">
+              <svg
+                viewBox={`0 0 ${width} ${height}`}
+                width="100%"
+                style={{ maxHeight: "100%" }}
+                preserveAspectRatio="xMidYMid meet"
+              >
                 <defs>
                   <marker
                     id="arrow"
@@ -368,12 +397,28 @@ function TraceStep({
         </span>
       </button>
       {open && (
-        <div className="mt-2 space-y-2 pl-4">
-          <div>
-            <div className="text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
-              input keys
+        <div className="mt-2 space-y-3 pl-4">
+          {event.output_preview && Object.keys(event.output_preview).length > 0 ? (
+            <div>
+              <div className="mb-1 text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
+                output
+              </div>
+              <div className="space-y-2">
+                {Object.entries(event.output_preview).map(([k, v]) => (
+                  <OutputField key={k} label={k} value={v} />
+                ))}
+              </div>
             </div>
-            <div className="mt-0.5 flex flex-wrap gap-1">
+          ) : (
+            <div className="text-[10px] italic text-ink-faint">
+              this node produced no state updates
+            </div>
+          )}
+          <details className="group">
+            <summary className="cursor-pointer text-[9.5px] uppercase tracking-[0.16em] text-ink-faint hover:text-ink-dim">
+              state on entry ({(event.input_snapshot_keys || []).length} keys)
+            </summary>
+            <div className="mt-1 flex flex-wrap gap-1">
               {(event.input_snapshot_keys || []).map((k) => (
                 <span
                   key={k}
@@ -383,44 +428,62 @@ function TraceStep({
                 </span>
               ))}
             </div>
-          </div>
-          <div>
-            <div className="text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
-              output keys
-            </div>
-            <div className="mt-0.5 flex flex-wrap gap-1">
-              {(event.output_keys || []).map((k) => (
-                <span
-                  key={k}
-                  className="rounded border border-mk-yellow/40 bg-mk-yellow/5 px-1.5 py-[1px] text-[10px] text-mk-yellow"
-                >
-                  {k}
-                </span>
-              ))}
-              {!(event.output_keys || []).length && (
-                <span className="text-[10px] text-ink-faint">(none)</span>
-              )}
-            </div>
-          </div>
-          {event.output_preview && Object.keys(event.output_preview).length > 0 && (
-            <div>
-              <div className="text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
-                output preview
-              </div>
-              <div className="mt-1 space-y-1">
-                {Object.entries(event.output_preview).map(([k, v]) => (
-                  <div key={k}>
-                    <div className="text-[10px] text-mk-blue">{k}</div>
-                    <pre className="max-h-40 overflow-auto rounded border border-chrome-border/60 bg-bg/60 p-1.5 text-[10px] leading-snug text-ink-dim">
-                      {v}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          </details>
         </div>
       )}
+    </div>
+  );
+}
+
+// Pretty label for common state keys and richer rendering for known shapes.
+const FRIENDLY_LABEL: Record<string, string> = {
+  query: "query",
+  primary_query: "cleaned query",
+  queries: "search variants",
+  sub_questions: "sub-questions (multi-hop split)",
+  chat_history: "prior turns",
+  answer: "answer",
+  dense_results: "dense hits",
+  bm25_results: "keyword hits (BM25)",
+  code_bm25_results: "keyword hits (BM25)",
+  fused_results: "after fusion",
+  reranked_results: "after rerank",
+  compressed_results: "after compression",
+  graph_hits: "code-graph hits",
+  focus_files: "focus files",
+  code_intent: "code intent",
+  complexity: "complexity",
+  verdict: "grounding verdict",
+  verify_reason: "verify reason",
+  unsupported_claims: "unsupported claims",
+  correction_attempts: "correction attempts",
+  is_multihop: "multi-hop?",
+  stored_chunk_count: "chunks stored",
+  graph_symbols: "symbols indexed",
+  graph_edges: "graph edges",
+  head_sha: "commit sha",
+};
+
+function OutputField({ label, value }: { label: string; value: string }) {
+  const pretty = FRIENDLY_LABEL[label] || label;
+  const isLongList = value.includes("\n") && value.startsWith("list ");
+  const isJson = value.startsWith("{") || value.startsWith("[");
+  return (
+    <div>
+      <div className="mb-0.5 flex items-baseline gap-2">
+        <span className="text-[10.5px] font-semibold text-mk-blue">{pretty}</span>
+        {pretty !== label && (
+          <span className="text-[9.5px] text-ink-faint">({label})</span>
+        )}
+      </div>
+      <pre
+        className={cn(
+          "max-h-56 overflow-auto rounded border border-chrome-border/60 bg-bg/70 px-2 py-1.5 text-[10.5px] leading-snug text-ink whitespace-pre-wrap break-words",
+          (isLongList || isJson) && "font-mono"
+        )}
+      >
+        {value}
+      </pre>
     </div>
   );
 }

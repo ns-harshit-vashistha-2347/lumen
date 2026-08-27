@@ -4,20 +4,36 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.models.repo import RepoStatus
 
 
 class RepoConnectRequest(BaseModel):
-    url: str = Field(..., description="GitHub URL (https or ssh)")
-    token: Optional[str] = Field(None, description="PAT for private repos; not stored in logs")
-    default_branch: Optional[str] = "main"
+    url: str = Field(..., min_length=1, max_length=2048, description="GitHub URL (https or ssh)")
+    token: Optional[str] = Field(None, max_length=1024, description="PAT for private repos; not stored in logs")
+    default_branch: Optional[str] = Field(default="main", max_length=255)
+
+    @field_validator("url")
+    @classmethod
+    def _strip_url(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("url cannot be blank")
+        return stripped
 
 
 class RepoPreviewRequest(BaseModel):
-    url: str
-    token: Optional[str] = None
+    url: str = Field(..., min_length=1, max_length=2048)
+    token: Optional[str] = Field(None, max_length=1024)
+
+    @field_validator("url")
+    @classmethod
+    def _strip_url(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("url cannot be blank")
+        return stripped
 
 
 class RepoPreviewResponse(BaseModel):

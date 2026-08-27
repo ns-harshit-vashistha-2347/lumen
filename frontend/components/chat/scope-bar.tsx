@@ -21,9 +21,17 @@ export function ScopeBar() {
         if (!cancelled) setDocs(d);
       })
       .catch((err) => {
-        if (!(err instanceof ApiError)) throw err;
+        // Never rethrow inside the promise chain — that becomes an unhandled
+        // rejection. ApiError is already surfaced elsewhere; other errors
+        // (network, 5xx) just leave the scope bar empty for this session.
+        if (!(err instanceof ApiError)) {
+          // eslint-disable-next-line no-console
+          console.warn("scope-bar: failed to load docs", err);
+        }
       })
-      .finally(() => !cancelled && setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };

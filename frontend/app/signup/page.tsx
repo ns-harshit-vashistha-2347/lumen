@@ -21,13 +21,19 @@ export default function SignupPage() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const normEmail = email.trim().toLowerCase();
+    const trimmedName = fullName.trim();
+    if (!normEmail) {
+      toast.error("Email is required");
+      return;
+    }
     if (password.length < 8) {
       toast.error("Password must be at least 8 characters");
       return;
     }
     setLoading(true);
     try {
-      await authApi.signup(email, password, fullName || undefined);
+      await authApi.signup(normEmail, password, trimmedName || undefined);
       router.push("/chat");
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : "Signup failed";

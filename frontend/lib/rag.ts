@@ -32,6 +32,19 @@ export interface QueryResponse {
   trace_id?: string | null;
 }
 
+export interface DocumentPreview {
+  id: string;
+  filename: string;
+  status: DocumentStatus;
+  chunk_count: number;
+  created_at: string | null;
+  chunks: {
+    content: string;
+    page?: number | null;
+    chunk_index?: number | null;
+  }[];
+}
+
 export const docsApi = {
   list: () => api.get<Document[]>("/documents"),
   upload: (file: File) =>
@@ -41,6 +54,8 @@ export const docsApi = {
     ),
   status: (id: string) => api.get<Document>(`/documents/${id}`),
   delete: (id: string) => api.del<void>(`/documents/${id}`),
+  preview: (id: string, limit = 8) =>
+    api.get<DocumentPreview>(`/documents/${id}/preview?limit=${limit}`),
 };
 
 export const queryApi = {
@@ -60,7 +75,19 @@ export const queryApi = {
     if (persist) body.persist = true;
     return api.post<QueryResponse>("/query", body);
   },
+  streamUrl: () => "/query/stream",
 };
+
+export interface QueryStreamMeta {
+  type: "meta";
+  session_id?: string | null;
+  trace_id?: string | null;
+  sources?: Array<{
+    source?: string | null;
+    page?: number | null;
+    score?: number;
+  }>;
+}
 
 // -------------------- v2.0 code playground -----------------------------------
 

@@ -55,7 +55,7 @@ export const chatSessionsApi = {
   create: (kind: ChatKind, opts: { title?: string; repo_id?: string } = {}) =>
     api.post<ChatSession>("/chat/sessions", { kind, ...opts }),
   rename: (id: string, title: string) =>
-    request<ChatSession>(`/chat/sessions/${id}`, "PATCH", { title }),
+    api.patch<ChatSession>(`/chat/sessions/${id}`, { title }),
   del: (id: string) => api.del<void>(`/chat/sessions/${id}`),
   messages: (id: string) =>
     api.get<StoredChatMessage[]>(`/chat/sessions/${id}/messages`),
@@ -66,35 +66,3 @@ export const graphApi = {
     api.get<GraphStructure>(`/chat/graphs/${name}`),
   trace: (traceId: string) => api.get<GraphTrace>(`/chat/traces/${traceId}`),
 };
-
-// PATCH isn't exposed in the shared api helper — small local wrapper.
-async function request<T>(
-  path: string,
-  method: string,
-  body?: unknown
-): Promise<T> {
-  const { API_URL } = await import("./env");
-  const { tokenStore } = await import("./token-store");
-  const { ApiError } = await import("./api");
-  const access = tokenStore.getAccess();
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(access ? { Authorization: `Bearer ${access}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const d = await res.json();
-      detail = (d.detail as string) || detail;
-    } catch {
-      /* noop */
-    }
-    throw new ApiError(res.status, detail);
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}

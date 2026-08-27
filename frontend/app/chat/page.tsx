@@ -11,10 +11,10 @@ import { ScopeBar } from "@/components/chat/scope-bar";
 import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
 import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { useRouter } from "next/navigation";
-import { queryApi } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
 import { useScope } from "@/lib/scope-store";
 import { chatSessionsApi } from "@/lib/chat-history";
+import { postStream } from "@/lib/stream";
 
 const SAMPLES = [
   "summarize the key points across every document in scope",
@@ -44,7 +44,9 @@ function ChatInner() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const activeLoadRef = useRef<string | null>(null);
   const loadSession = useCallback(async (id: string | null) => {
+    activeLoadRef.current = id;
     setSessionId(id);
     if (!id) {
       setMessages([]);
@@ -53,6 +55,9 @@ function ChatInner() {
     }
     try {
       const msgs = await chatSessionsApi.messages(id);
+      // If the user switched to a different session mid-flight, drop this
+      // response — the newer selection wins.
+      if (activeLoadRef.current !== id) return;
       setMessages(
         msgs.map((m) => ({
           id: m.id,
@@ -65,6 +70,7 @@ function ChatInner() {
       const lastAsst = [...msgs].reverse().find((m) => m.role === "assistant");
       setLastTraceId(lastAsst?.trace_id || null);
     } catch (err) {
+      if (activeLoadRef.current !== id) return;
       if (err instanceof ApiError) toast.error(err.detail);
     }
   }, []);
@@ -122,8 +128,14 @@ function ChatInner() {
       return true;
     }
     void rest;
-    return false;
+    // Any other slash-prefixed input is an unknown command — swallow it so
+    // the user doesn't accidentally send "/foo" as a real query.
+    pushSystem(`unknown command: \`${cmd}\` · try \`/help\``);
+    setInput("");
+    return true;
   }
+
+  const abortRef = useRef<AbortController | null>(null);
 
   async function submit(prompt?: string) {
     const text = (prompt ?? input).trim();
@@ -143,49 +155,110 @@ function ChatInner() {
       role: "assistant",
       content: "",
       loading: true,
+      streaming: true,
       at: new Date(),
     };
     setMessages((m) => [...m, userMsg, loadingMsg]);
     setInput("");
     setSending(true);
 
-    try {
-      const res = await queryApi.ask(text, {
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    let acc = "";
+    await postStream(
+      "/query/stream",
+      {
+        query: text,
+        top_k: 5,
         document_ids: scope.size > 0 ? [...scope] : undefined,
         session_id: sessionId || undefined,
         persist: true,
-      });
-      if (res.session_id && !sessionId) setSessionId(res.session_id);
-      if (res.trace_id) setLastTraceId(res.trace_id);
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === loadingId
-            ? {
-                ...msg,
-                loading: false,
-                content: res.answer || "_(no answer generated)_",
-                sources: res.sources,
-              }
-            : msg
-        )
-      );
-    } catch (err) {
-      const detail = err instanceof ApiError ? err.detail : "something went wrong";
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === loadingId
-            ? {
-                ...msg,
-                loading: false,
-                content: `_error: ${detail}_`,
-              }
-            : msg
-        )
-      );
-      toast.error(detail);
-    } finally {
-      setSending(false);
-    }
+      },
+      {
+        signal: controller.signal,
+        onMeta: (meta) => {
+          const sid = meta.session_id as string | null | undefined;
+          const tid = meta.trace_id as string | null | undefined;
+          const sources = meta.sources as ChatMessage["streamingSources"] | undefined;
+          if (sid && !sessionId) setSessionId(sid);
+          if (tid) setLastTraceId(tid);
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? { ...msg, loading: false, streamingSources: sources || undefined }
+                : msg
+            )
+          );
+        },
+        onToken: (chunk) => {
+          acc += chunk;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId ? { ...msg, loading: false, content: acc } : msg
+            )
+          );
+        },
+        onDone: () => {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? {
+                    ...msg,
+                    streaming: false,
+                    loading: false,
+                    content: acc || "_(no answer generated)_",
+                  }
+                : msg
+            )
+          );
+          setSending(false);
+        },
+        onError: (err) => {
+          const detail = err instanceof ApiError ? err.detail : err.message || "something went wrong";
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? {
+                    ...msg,
+                    streaming: false,
+                    loading: false,
+                    error: true,
+                    content: `_error: ${detail}_`,
+                  }
+                : msg
+            )
+          );
+          toast.error(detail);
+          setSending(false);
+        },
+      }
+    );
+  }
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  function findUserBefore(assistantId: string): ChatMessage | null {
+    const idx = messages.findIndex((m) => m.id === assistantId);
+    for (let i = idx - 1; i >= 0; i--) if (messages[i].role === "user") return messages[i];
+    return null;
+  }
+
+  function onRetry(assistantMsg: ChatMessage) {
+    const user = findUserBefore(assistantMsg.id);
+    if (!user) return;
+    // Drop the assistant answer and re-ask
+    setMessages((m) => m.filter((x) => x.id !== assistantMsg.id));
+    submit(user.content);
+  }
+
+  function onEditResend(userMsg: ChatMessage, newContent: string) {
+    // Drop this user turn and any messages after it, then re-submit with new text
+    setMessages((m) => {
+      const idx = m.findIndex((x) => x.id === userMsg.id);
+      return idx >= 0 ? m.slice(0, idx) : m;
+    });
+    submit(newContent);
   }
 
   return (
@@ -237,7 +310,14 @@ function ChatInner() {
           {messages.length === 0 ? (
             <EmptyState onPick={(p) => submit(p)} scopeSize={scope.size} />
           ) : (
-            messages.map((m) => <MessageBubble key={m.id} message={m} />)
+            messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                onRetry={onRetry}
+                onEditResend={onEditResend}
+              />
+            ))
           )}
         </div>
       </div>

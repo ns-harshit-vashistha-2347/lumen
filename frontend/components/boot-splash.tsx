@@ -11,8 +11,14 @@ export function BootSplash() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (sessionStorage.getItem("lumen.boot") === "1") return;
-    sessionStorage.setItem("lumen.boot", "1");
+    // sessionStorage can throw in private / disabled-storage modes; treat that
+    // as "not yet shown this session" and continue.
+    try {
+      if (sessionStorage.getItem("lumen.boot") === "1") return;
+      sessionStorage.setItem("lumen.boot", "1");
+    } catch {
+      /* noop */
+    }
     setVisible(true);
     const t1 = setTimeout(() => setPhase("fade"), 900);
     const t2 = setTimeout(() => setPhase("gone"), 1400);

@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 
 from src.core.rate_limit import limiter
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
@@ -51,11 +52,16 @@ async def signup(request: Request, payload: SignupRequest, db: AsyncSession = De
     user = User(
         email=payload.email.lower(),
         hashed_password=hash_password(payload.password),
-        full_name=payload.full_name,
+        full_name=(payload.full_name or "").strip() or None,
         provider=AuthProvider.LOCAL,
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Lost the race against another signup for the same email.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Email is already registered")
     await db.refresh(user)
 
     return await _issue_token_pair(user, db)

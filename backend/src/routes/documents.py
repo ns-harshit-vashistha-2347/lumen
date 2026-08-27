@@ -1,7 +1,7 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from src.core.config import settings
 from src.core.db import get_db
 from src.core.deps import get_current_user
 from src.core.logging import get_logger
+from src.core.vectorstore import get_collections
 from src.models.document import Document, DocumentStatus
 from src.models.user import User
 from src.schemas.document import DocumentStatusResponse, DocumentUploadResponse
@@ -25,11 +26,13 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in settings.allowed_extensions:
+    if not file.filename or not file.filename.strip():
+        raise HTTPException(status_code=400, detail="Filename is required")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if not ext or ext not in settings.allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{ext}'. Allowed: {sorted(settings.allowed_extensions)}",
+            detail=f"Unsupported file type '{ext or 'none'}'. Allowed: {sorted(settings.allowed_extensions)}",
         )
 
     document_id = uuid.uuid4()
@@ -117,6 +120,59 @@ async def get_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+@document_router.get("/{document_id}/preview")
+async def preview_document(
+    document_id: uuid.UUID,
+    limit: int = Query(default=8, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the first `limit` chunks of a document — powers the library
+    preview pane so users can peek at what got indexed without downloading
+    the source file."""
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id, Document.user_id == current_user.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks: list[dict] = []
+    if doc.status == DocumentStatus.COMPLETED:
+        try:
+            collection = get_collections(settings.CHROMA_COLLECTION_DOCUMENTS)
+            data = collection.get(
+                where={"$and": [
+                    {"user_id": str(current_user.id)},
+                    {"document_id": str(document_id)},
+                ]},
+                include=["metadatas", "documents"],
+                limit=limit,
+            )
+            documents = data.get("documents", []) or []
+            metadatas = data.get("metadatas", []) or []
+            for content, metadata in zip(documents, metadatas):
+                metadata = metadata or {}
+                chunks.append({
+                    "content": (content or "")[:1200],
+                    "page": metadata.get("page_number") or metadata.get("page"),
+                    "chunk_index": metadata.get("chunk_index"),
+                })
+        except Exception as exc:
+            logger.warning(f"[/documents/preview] chroma fetch failed: {exc}")
+
+    return {
+        "id": str(doc.id),
+        "filename": doc.filename,
+        "status": doc.status.value if hasattr(doc.status, "value") else str(doc.status),
+        "chunk_count": doc.chunk_count,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "chunks": chunks,
+    }
 
 
 @document_router.delete("/{document_id}", status_code=204)

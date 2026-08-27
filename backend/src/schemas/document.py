@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.models.document import DocumentStatus
 
@@ -26,8 +26,8 @@ class DocumentStatusResponse(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    query: str
-    top_k: int = 5
+    query: str = Field(..., min_length=1, max_length=8000)
+    top_k: int = Field(default=5, ge=1, le=50)
     document_ids: list[uuid.UUID] | None = None
     # If provided, the turn is appended to this session and prior turns are
     # included as chat history in the prompt.
@@ -36,6 +36,14 @@ class QueryRequest(BaseModel):
     # returns its id — clients that want persistence but haven't opened a
     # session yet.
     persist: bool = False
+
+    @field_validator("query")
+    @classmethod
+    def _strip_query(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("query cannot be blank")
+        return stripped
 
 
 class SourceChunk(BaseModel):

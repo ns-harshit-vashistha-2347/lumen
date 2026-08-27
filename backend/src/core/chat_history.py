@@ -42,7 +42,10 @@ async def ensure_session(
             raise HTTPException(status_code=404, detail="Chat session not found")
         return session
 
-    title = (seed_title or "new chat").strip()[:80] or "new chat"
+    # Fold whitespace, cap length, and fall back to "new chat" if the seed is
+    # empty or whitespace-only so the session list never renders a blank row.
+    raw_title = (seed_title or "").strip()
+    title = (raw_title[:80] or "new chat")
     session = ChatSession(
         user_id=user_id,
         kind=kind,

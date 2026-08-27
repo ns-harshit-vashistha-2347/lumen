@@ -39,15 +39,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await authApi.me();
       setUser(me);
     } catch (err) {
-      // On 401 the token is invalid → clear and go to login.
-      // On any other failure (network down, 5xx, CORS) we must not leave the
-      // app stuck on the boot splash — surface it by routing to /login too,
-      // where the user can retry once the backend is reachable.
-      if (err instanceof ApiError && err.status === 401) {
+      // Only wipe the token and redirect for a real auth failure (401/403).
+      // For transient errors (5xx, network, CORS) keep the token so a retry
+      // works, but still show the login page so the user isn't stuck on the
+      // boot splash forever.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         tokenStore.clear();
+        setUser(null);
+        router.replace("/login");
+      } else {
+        setUser(null);
+        router.replace("/login");
       }
-      setUser(null);
-      router.replace("/login");
     } finally {
       setLoading(false);
     }

@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import ReactMarkdown, { type Components } from "react-markdown";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -27,13 +26,15 @@ import { ApiError } from "@/lib/api";
 import { chatSessionsApi } from "@/lib/chat-history";
 import { cn } from "@/lib/cn";
 import {
-  codeQueryApi,
   reposApi,
-  type CodeQueryResponse,
   type CodeSourceChunk,
   type GraphHit,
   type Repo,
+  type SourceChunk,
 } from "@/lib/rag";
+import { postStream } from "@/lib/stream";
+import { AnswerBody } from "@/components/chat/answer-body";
+import { SkeletonSources } from "@/components/chat/skeleton-sources";
 
 const SAMPLES = [
   "where is the auth middleware defined?",
@@ -42,73 +43,23 @@ const SAMPLES = [
   "what does src/app.py import?",
 ];
 
-const CODE_MD_COMPONENTS: Components = {
-  table: ({ children, ...props }) => (
-    <div className="my-2 overflow-x-auto rounded border border-chrome-border/60">
-      <table className="w-full border-collapse text-[12px]" {...props}>
-        {children}
-      </table>
-    </div>
-  ),
-  th: ({ children, ...props }) => (
-    <th
-      className="border-b border-chrome-border/60 bg-bg-raised/60 px-2 py-1 text-left text-ink"
-      {...props}
-    >
-      {children}
-    </th>
-  ),
-  td: ({ children, ...props }) => (
-    <td className="border-b border-chrome-border/40 px-2 py-1 align-top text-ink-dim" {...props}>
-      {children}
-    </td>
-  ),
-  pre: ({ children, ...props }) => (
-    <pre
-      className="my-2 max-h-96 overflow-auto rounded border border-chrome-border/60 bg-bg/70 p-2 text-[11.5px] leading-snug"
-      {...props}
-    >
-      {children}
-    </pre>
-  ),
-  code: ({ inline, className, children, ...props }: {
-    inline?: boolean;
-    className?: string;
-    children?: ReactNode;
-  }) =>
-    inline ? (
-      <code
-        className="rounded bg-bg-raised/70 px-1 py-[1px] font-mono text-[12px] text-mk-yellow"
-        {...props}
-      >
-        {children}
-      </code>
-    ) : (
-      <code className={cn("font-mono", className)} {...props}>
-        {children}
-      </code>
-    ),
-  hr: () => (
-    <hr className="my-3 border-0 border-t border-chrome-border/40" />
-  ),
-  p: ({ children }) => (
-    <p className="my-1.5 leading-relaxed">{children}</p>
-  ),
-  ul: ({ children }) => <ul className="my-1.5 ml-4 list-disc space-y-0.5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-1.5 ml-4 list-decimal space-y-0.5">{children}</ol>,
-  h1: ({ children }) => <h3 className="mt-3 mb-1 text-[15px] font-semibold text-ink">{children}</h3>,
-  h2: ({ children }) => <h3 className="mt-3 mb-1 text-[14px] font-semibold text-ink">{children}</h3>,
-  h3: ({ children }) => <h4 className="mt-3 mb-1 text-[13px] font-semibold text-ink">{children}</h4>,
-};
 
 type CodeMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   loading?: boolean;
+  streaming?: boolean;
+  error?: boolean;
   intent?: string;
   graph_hits?: GraphHit[];
   sources?: CodeSourceChunk[];
+  streamingSources?: {
+    path?: string | null;
+    start_line?: number | null;
+    end_line?: number | null;
+    symbol_name?: string | null;
+  }[];
   at: Date;
 };
 
@@ -130,7 +81,9 @@ function CodeChatInner() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const activeLoadRef = useRef<string | null>(null);
   const loadSession = useCallback(async (id: string | null) => {
+    activeLoadRef.current = id;
     setSessionId(id);
     if (!id) {
       setMessages([]);
@@ -139,6 +92,7 @@ function CodeChatInner() {
     }
     try {
       const msgs = await chatSessionsApi.messages(id);
+      if (activeLoadRef.current !== id) return;
       setMessages(
         msgs.map((m) => ({
           id: m.id,
@@ -153,6 +107,7 @@ function CodeChatInner() {
       const lastAsst = [...msgs].reverse().find((m) => m.role === "assistant");
       setLastTraceId(lastAsst?.trace_id || null);
     } catch (err) {
+      if (activeLoadRef.current !== id) return;
       if (err instanceof ApiError) toast.error(err.detail);
     }
   }, []);
@@ -185,6 +140,9 @@ function CodeChatInner() {
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, [input]);
 
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   async function submit(prompt?: string) {
     const text = (prompt ?? input).trim();
     if (!text || sending) return;
@@ -205,46 +163,92 @@ function CodeChatInner() {
       role: "assistant",
       content: "",
       loading: true,
+      streaming: true,
       at: new Date(),
     };
     setMessages((m) => [...m, userMsg, loadingMsg]);
     setInput("");
     setSending(true);
 
-    try {
-      const res: CodeQueryResponse = await codeQueryApi.ask(repoId, text, {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let acc = "";
+
+    await postStream(
+      "/code-query/stream",
+      {
+        repo_id: repoId,
+        query: text,
         session_id: sessionId || undefined,
         persist: true,
-      });
-      if (res.session_id && !sessionId) setSessionId(res.session_id);
-      if (res.trace_id) setLastTraceId(res.trace_id);
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === loadingId
-            ? {
-                ...msg,
-                loading: false,
-                content: res.answer || "_(no answer generated)_",
-                intent: res.intent,
-                graph_hits: res.graph_hits,
-                sources: res.sources,
-              }
-            : msg
-        )
-      );
-    } catch (err) {
-      const detail = err instanceof ApiError ? err.detail : "something went wrong";
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === loadingId
-            ? { ...msg, loading: false, content: `_error: ${detail}_` }
-            : msg
-        )
-      );
-      toast.error(detail);
-    } finally {
-      setSending(false);
-    }
+      },
+      {
+        signal: controller.signal,
+        onMeta: (meta) => {
+          const sid = meta.session_id as string | null | undefined;
+          const tid = meta.trace_id as string | null | undefined;
+          const intent = (meta.intent as string) || undefined;
+          const graph_hits = (meta.graph_hits as GraphHit[]) || undefined;
+          const sources = (meta.sources as CodeMessage["streamingSources"]) || undefined;
+          if (sid && !sessionId) setSessionId(sid);
+          if (tid) setLastTraceId(tid);
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? {
+                    ...msg,
+                    loading: false,
+                    intent,
+                    graph_hits,
+                    streamingSources: sources,
+                  }
+                : msg
+            )
+          );
+        },
+        onToken: (chunk) => {
+          acc += chunk;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId ? { ...msg, loading: false, content: acc } : msg
+            )
+          );
+        },
+        onDone: () => {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? {
+                    ...msg,
+                    streaming: false,
+                    loading: false,
+                    content: acc || "_(no answer generated)_",
+                  }
+                : msg
+            )
+          );
+          setSending(false);
+        },
+        onError: (err) => {
+          const detail = err instanceof ApiError ? err.detail : err.message || "something went wrong";
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === loadingId
+                ? {
+                    ...msg,
+                    streaming: false,
+                    loading: false,
+                    error: true,
+                    content: `_error: ${detail}_`,
+                  }
+                : msg
+            )
+          );
+          toast.error(detail);
+          setSending(false);
+        },
+      }
+    );
   }
 
   if (loadingRepo) {
@@ -617,8 +621,23 @@ function CodeBubble({ message }: { message: CodeMessage }) {
       await navigator.clipboard.writeText(message.content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch {}
+    } catch {
+      /* noop */
+    }
   }
+
+  const bubbleSources: SourceChunk[] | undefined = message.sources?.map((s) => ({
+    content: s.content,
+    metadata: {
+      source: s.path,
+      path: s.path,
+      symbol_name: s.symbol_name,
+      symbol_kind: s.symbol_kind,
+      start_line: s.start_line,
+      end_line: s.end_line,
+    } as Record<string, unknown>,
+    score: s.score,
+  }));
 
   return (
     <article
@@ -626,7 +645,8 @@ function CodeBubble({ message }: { message: CodeMessage }) {
         "overflow-hidden rounded-md border animate-fade-in",
         isUser
           ? "border-prompt/30 bg-prompt/[0.06]"
-          : "border-chrome-border bg-bg-soft/70"
+          : "border-chrome-border bg-bg-soft/70",
+        message.error && "border-danger/40 bg-danger/[0.05]"
       )}
     >
       <header
@@ -634,25 +654,27 @@ function CodeBubble({ message }: { message: CodeMessage }) {
           "flex items-center justify-between gap-3 border-b px-3.5 py-2 font-mono text-[10.5px] uppercase tracking-[0.16em]",
           isUser
             ? "border-prompt/25 text-prompt"
+            : message.error
+            ? "border-danger/30 text-danger"
             : "border-chrome-border text-ink-dim"
         )}
       >
         <span className="flex items-center gap-2">
-          <span className={cn(isUser ? "text-prompt" : "text-ok")}>
-            {isUser ? "▸" : "◆"}
+          <span className={cn(isUser ? "text-prompt" : message.error ? "text-danger" : "text-ok")}>
+            {isUser ? "▸" : message.error ? "×" : "◆"}
           </span>
           <span className="font-semibold">{isUser ? "you" : "lumen"}</span>
-          {!isUser && message.loading && (
+          {!isUser && (message.streaming || message.loading) && (
             <span className="flex items-center gap-1.5 normal-case tracking-normal text-prompt">
               <span className="h-1.5 w-1.5 rounded-full bg-prompt animate-pulse shadow-[0_0_6px_currentColor]" />
-              proc
+              {message.streaming ? "streaming" : "proc"}
             </span>
           )}
-          {!isUser && !message.loading && message.intent && (
+          {!isUser && !message.streaming && !message.loading && message.intent && (
             <IntentPill intent={message.intent} />
           )}
         </span>
-        {!isUser && !message.loading && message.content && (
+        {!isUser && !message.loading && !message.streaming && message.content && (
           <button
             onClick={copyContent}
             className="rounded p-1 text-ink-faint hover:bg-chrome-hover hover:text-ink"
@@ -668,21 +690,30 @@ function CodeBubble({ message }: { message: CodeMessage }) {
       </header>
 
       <div className="px-3.5 py-3">
-        {message.loading ? (
+        {message.loading && !message.content ? (
           <p className="font-mono text-[12px] text-ink-dim">
             <span className="text-prompt">▸</span> retrieving from graph +
             vectors<span className="caret text-prompt" />
           </p>
+        ) : isUser ? (
+          <p className="whitespace-pre-wrap font-mono text-[13.5px] leading-relaxed text-ink">
+            {message.content}
+          </p>
         ) : (
-          <div className="prose prose-invert min-w-0 max-w-none font-mono text-[13px] leading-relaxed text-ink">
-            <ReactMarkdown components={CODE_MD_COMPONENTS}>{message.content}</ReactMarkdown>
-          </div>
+          <AnswerBody
+            content={message.content || (message.streaming ? "" : "_(no answer)_")}
+            sources={bubbleSources}
+            streaming={message.streaming}
+          />
         )}
 
-        {!isUser && !message.loading && !!message.graph_hits?.length && (
+        {!isUser && message.streaming && !message.sources && message.streamingSources && (
+          <SkeletonSources hints={message.streamingSources} />
+        )}
+        {!isUser && !message.streaming && !message.loading && !!message.graph_hits?.length && (
           <GraphHitsBlock hits={message.graph_hits} />
         )}
-        {!isUser && !message.loading && !!message.sources?.length && (
+        {!isUser && !message.streaming && !message.loading && !!message.sources?.length && (
           <SourcesBlock sources={message.sources} />
         )}
       </div>

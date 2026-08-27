@@ -18,7 +18,11 @@ function read(): Set<string> {
 
 function write(ids: Set<string>) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(KEY, JSON.stringify([...ids]));
+  try {
+    localStorage.setItem(KEY, JSON.stringify([...ids]));
+  } catch {
+    /* storage unavailable — scope becomes session-local */
+  }
   window.dispatchEvent(new Event("lumen:scope-change"));
 }
 

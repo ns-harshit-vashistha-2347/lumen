@@ -20,9 +20,14 @@ export default function LoginPage() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const normEmail = email.trim().toLowerCase();
+    if (!normEmail || !password) {
+      toast.error("Email and password are required");
+      return;
+    }
     setLoading(true);
     try {
-      await authApi.login(email, password);
+      await authApi.login(normEmail, password);
       router.push("/chat");
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail : "Login failed";

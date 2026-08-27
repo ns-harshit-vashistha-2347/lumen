@@ -13,12 +13,17 @@ import {
   MessageSquare,
   FileText,
   Zap,
+  Eye,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { PreviewPane } from "@/components/documents/preview-pane";
 import { docsApi, type Document } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -31,6 +36,14 @@ const ACTIVE_STATUSES = new Set<Document["status"]>([
   "embedding",
   "storing",
 ]);
+
+function formatBytes(n: number): string {
+  if (!n) return "0B";
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)}GB`;
+}
 
 function fileMeta(name: string): { ext: string; color: string; kind: string } {
   const ext = (name.split(".").pop() || "").toLowerCase();
@@ -50,16 +63,30 @@ function fileMeta(name: string): { ext: string; color: string; kind: string } {
   }
 }
 
+type UploadItem = {
+  id: string;
+  name: string;
+  size: number;
+  status: "queued" | "uploading" | "done" | "error";
+  error?: string;
+};
+
 function DocumentsInner() {
   const [scope, store] = useScope();
   const [docs, setDocs] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [filter, setFilter] = useState("");
   const [cursor, setCursor] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastAnchor, setLastAnchor] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const nudgedRef = useRef<Set<string>>(new Set());
+  const prevStatusRef = useRef<Map<string, Document["status"]>>(new Map());
 
   const loadDocs = useCallback(async () => {
     try {
@@ -85,22 +112,49 @@ function DocumentsInner() {
 
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
+    const items: UploadItem[] = Array.from(files).map((f) => ({
+      id: crypto.randomUUID(),
+      name: f.name,
+      size: f.size,
+      status: "queued",
+    }));
+    setUploadQueue((q) => [...q, ...items]);
     setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
+
+    // Upload in parallel — 3 at a time so we don't hammer the API with a
+    // 30-file drop but still overlap the slow ones.
+    const CONCURRENCY = 3;
+    const queue = Array.from(files).map((file, i) => ({ file, item: items[i] }));
+    let cursor = 0;
+    async function worker() {
+      while (cursor < queue.length) {
+        const { file, item } = queue[cursor++];
+        setUploadQueue((q) =>
+          q.map((x) => (x.id === item.id ? { ...x, status: "uploading" } : x))
+        );
         try {
           await docsApi.upload(file);
-          toast.success(`+ ${file.name}`);
+          setUploadQueue((q) =>
+            q.map((x) => (x.id === item.id ? { ...x, status: "done" } : x))
+          );
         } catch (err) {
           const detail = err instanceof ApiError ? err.detail : "upload failed";
-          toast.error(`${file.name}: ${detail}`);
+          setUploadQueue((q) =>
+            q.map((x) => (x.id === item.id ? { ...x, status: "error", error: detail } : x))
+          );
         }
       }
-      await loadDocs();
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+    await loadDocs();
+
+    // Clear completed items 4s later so the strip auto-tidies.
+    setTimeout(() => {
+      setUploadQueue((q) => q.filter((x) => x.status === "uploading" || x.status === "error"));
+    }, 4000);
   }
 
   async function remove(id: string, name: string) {
@@ -135,6 +189,16 @@ function DocumentsInner() {
     else store.set(ready.map((d) => d.id));
   }
 
+  // Ref-latch the volatile callbacks so the keyboard handler always sees the
+  // latest closures without needing to re-bind the window listener on every
+  // docs poll (which would drop keypresses during rebind).
+  const removeRef = useRef(remove);
+  const toggleAllRef = useRef(toggleAll);
+  useEffect(() => {
+    removeRef.current = remove;
+    toggleAllRef.current = toggleAll;
+  });
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -153,26 +217,137 @@ function DocumentsInner() {
         if (doc && doc.status === "completed") store.toggle(doc.id);
       } else if (e.key === "a" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        toggleAll();
+        toggleAllRef.current();
       } else if (e.key === "d" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         const doc = filtered[cursor];
-        if (doc) remove(doc.id, doc.filename);
+        if (doc) removeRef.current(doc.id, doc.filename);
       } else if (e.key === "/") {
         e.preventDefault();
         (document.getElementById("doc-filter") as HTMLInputElement | null)?.focus();
+      } else if (e.key === "p" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const doc = filtered[cursor];
+        if (doc) setPreviewId(doc.id);
       } else if (e.key === "?") {
         e.preventDefault();
         setShortcutsOpen((v) => !v);
+      } else if (e.key === "Escape") {
+        if (previewId) {
+          e.preventDefault();
+          setPreviewId(null);
+        } else if (selectedIds.size > 0) {
+          e.preventDefault();
+          setSelectedIds(new Set());
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filtered, cursor, store]);
+  }, [filtered, cursor, store, previewId, selectedIds]);
 
   useEffect(() => {
     if (cursor >= filtered.length) setCursor(Math.max(0, filtered.length - 1));
   }, [filtered.length, cursor]);
+
+  // Ready-to-chat nudge: when a doc flips from an active status to completed,
+  // pop a toast the user can click to jump into chat with that doc in scope.
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    docs.forEach((d) => {
+      const before = prev.get(d.id);
+      if (
+        d.status === "completed" &&
+        before &&
+        before !== "completed" &&
+        !nudgedRef.current.has(d.id)
+      ) {
+        nudgedRef.current.add(d.id);
+        toast.success(`${d.filename} is ready to chat`, {
+          action: {
+            label: "chat →",
+            onClick: () => {
+              store.add(d.id);
+              window.location.href = "/chat";
+            },
+          },
+        });
+      }
+      prev.set(d.id, d.status);
+    });
+  }, [docs, store]);
+
+  const previewDoc = previewId ? docs.find((d) => d.id === previewId) || null : null;
+
+  function onRowClick(i: number, doc: Document, ev: React.MouseEvent) {
+    if (doc.status !== "completed") return;
+    // Shift-click: range-select toggle across [anchor..i]
+    if (ev.shiftKey && lastAnchor != null) {
+      ev.preventDefault();
+      const [lo, hi] = lastAnchor < i ? [lastAnchor, i] : [i, lastAnchor];
+      setSelectedIds((s) => {
+        const next = new Set(s);
+        for (let k = lo; k <= hi; k++) {
+          const d = filtered[k];
+          if (d && d.status === "completed") next.add(d.id);
+        }
+        return next;
+      });
+      return;
+    }
+    // Cmd/Ctrl-click: toggle multi-select without touching scope
+    if (ev.metaKey || ev.ctrlKey) {
+      ev.preventDefault();
+      setSelectedIds((s) => {
+        const next = new Set(s);
+        if (next.has(doc.id)) next.delete(doc.id);
+        else next.add(doc.id);
+        return next;
+      });
+      setLastAnchor(i);
+      return;
+    }
+    // Plain click: toggle scope for this row (existing behavior)
+    store.toggle(doc.id);
+    setLastAnchor(i);
+  }
+
+  function bulkAddToScope() {
+    if (selectedIds.size === 0) return;
+    const ids = new Set(scope);
+    selectedIds.forEach((id) => ids.add(id));
+    store.set([...ids]);
+    toast.success(`+${selectedIds.size} to scope`);
+    setSelectedIds(new Set());
+  }
+  function bulkRemoveFromScope() {
+    if (selectedIds.size === 0) return;
+    const ids = new Set(scope);
+    selectedIds.forEach((id) => ids.delete(id));
+    store.set([...ids]);
+    toast.success(`-${selectedIds.size} from scope`);
+    setSelectedIds(new Set());
+  }
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`delete ${selectedIds.size} document${selectedIds.size === 1 ? "" : "s"}? irreversible.`)) return;
+    const ids = [...selectedIds];
+    let ok = 0;
+    let bad = 0;
+    for (const id of ids) {
+      try {
+        await docsApi.delete(id);
+        ok++;
+        store.remove(id);
+      } catch {
+        bad++;
+      }
+    }
+    setDocs((d) => d.filter((x) => !selectedIds.has(x.id)));
+    setSelectedIds(new Set());
+    if (ok) toast.success(`removed ${ok}`);
+    if (bad) toast.error(`${bad} deletion${bad === 1 ? "" : "s"} failed`);
+  }
 
   const isEmpty = !loading && docs.length === 0;
 
@@ -323,6 +498,45 @@ function DocumentsInner() {
             )}
           </div>
 
+          {/* upload queue strip */}
+          {uploadQueue.length > 0 && (
+            <ul className="border-b border-chrome-border bg-bg-raised/40 px-3 py-2 space-y-1 font-mono text-[11px]">
+              {uploadQueue.map((it) => (
+                <li key={it.id} className="flex items-center gap-2">
+                  {it.status === "uploading" ? (
+                    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-mk-yellow" />
+                  ) : it.status === "done" ? (
+                    <CheckCircle2 className="h-3 w-3 shrink-0 text-mk-green" />
+                  ) : it.status === "error" ? (
+                    <XCircle className="h-3 w-3 shrink-0 text-danger" />
+                  ) : (
+                    <span className="h-3 w-3 shrink-0 rounded-full border border-chrome-border" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-ink">{it.name}</span>
+                  <span className="tabular-nums text-ink-faint">
+                    {formatBytes(it.size)}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-[9.5px] uppercase tracking-[0.14em]",
+                      it.status === "done" && "text-mk-green",
+                      it.status === "uploading" && "text-mk-yellow",
+                      it.status === "error" && "text-danger",
+                      it.status === "queued" && "text-ink-faint"
+                    )}
+                  >
+                    {it.status}
+                  </span>
+                  {it.error && (
+                    <span className="max-w-[200px] truncate text-[10px] text-danger">
+                      {it.error}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
           {/* file listing */}
           <div className="bg-bg-soft/40">
             {loading ? (
@@ -342,30 +556,66 @@ function DocumentsInner() {
             ) : (
               <>
                 {/* selection helper strip */}
-                <div className="border-b border-chrome-border bg-chrome/50 px-4 py-1.5 text-[10.5px] uppercase tracking-[0.16em] text-mk-comment">
-                  <span className="text-mk-green">tip:</span>{" "}
-                  <span className="normal-case tracking-normal text-ink-dim">
-                    click a row to add it to your chat scope · selected docs get searched first
-                  </span>
-                </div>
+                {selectedIds.size > 0 ? (
+                  <div className="flex items-center justify-between gap-3 border-b border-mk-blue/40 bg-mk-blue/[0.06] px-4 py-2 font-mono text-[10.5px]">
+                    <span className="uppercase tracking-[0.16em] text-mk-blue">
+                      {selectedIds.size} selected
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={bulkAddToScope}
+                        className="rounded border border-mk-green/40 bg-mk-green/[0.08] px-2 py-1 text-mk-green hover:bg-mk-green/[0.16]"
+                      >
+                        + to scope
+                      </button>
+                      <button
+                        onClick={bulkRemoveFromScope}
+                        className="rounded border border-chrome-border bg-bg-raised px-2 py-1 text-ink-dim hover:border-mk-yellow/40 hover:text-mk-yellow"
+                      >
+                        − from scope
+                      </button>
+                      <button
+                        onClick={bulkDelete}
+                        className="rounded border border-danger/40 bg-danger/[0.06] px-2 py-1 text-danger hover:bg-danger/[0.14]"
+                      >
+                        delete
+                      </button>
+                      <button
+                        onClick={() => setSelectedIds(new Set())}
+                        className="rounded border border-chrome-border bg-bg-raised px-2 py-1 text-ink-dim hover:text-ink"
+                      >
+                        clear
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border-b border-chrome-border bg-chrome/50 px-4 py-1.5 text-[10.5px] uppercase tracking-[0.16em] text-mk-comment">
+                    <span className="text-mk-green">tip:</span>{" "}
+                    <span className="normal-case tracking-normal text-ink-dim">
+                      click → scope · shift/⌘-click → multi-select · eye → preview
+                    </span>
+                  </div>
+                )}
 
                 <ul className="divide-y divide-chrome-border/60">
                   {filtered.map((doc, i) => {
                     const isReady = doc.status === "completed";
                     const isInScope = scope.has(doc.id);
+                    const isSelected = selectedIds.has(doc.id);
                     const isCursor = i === cursor;
                     const meta = fileMeta(doc.filename);
                     return (
                       <li
                         key={doc.id}
                         onMouseEnter={() => setCursor(i)}
-                        onClick={() => isReady && store.toggle(doc.id)}
+                        onClick={(e) => onRowClick(i, doc, e)}
                         className={cn(
                           "group flex cursor-pointer items-center gap-3 border-l-2 px-3 py-2.5 text-[12.5px] transition-colors",
                           isCursor
                             ? "border-l-mk-pink bg-line/70"
                             : "border-l-transparent hover:bg-line/40",
                           isInScope && !isCursor && "border-l-mk-green/60 bg-mk-green/[0.06]",
+                          isSelected && "bg-mk-blue/[0.10] ring-1 ring-inset ring-mk-blue/40",
                           !isReady && "cursor-not-allowed"
                         )}
                       >
@@ -429,6 +679,18 @@ function DocumentsInner() {
                         {/* status */}
                         <StatusBadge status={doc.status} />
 
+                        {/* preview */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewId(doc.id);
+                          }}
+                          className="rounded p-1 text-mk-comment opacity-0 transition-opacity hover:bg-mk-blue/15 hover:text-mk-blue group-hover:opacity-100"
+                          title="preview"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+
                         {/* delete */}
                         <button
                           onClick={(e) => {
@@ -478,14 +740,30 @@ function DocumentsInner() {
                 <Key label="j/k" desc="navigate rows" />
                 <Key label="space" desc="add / remove from scope" />
                 <Key label="a" desc="select all" />
+                <Key label="p" desc="preview" />
                 <Key label="d" desc="delete file" />
                 <Key label="/" desc="focus search" />
+                <Key label="shift+click" desc="range select" />
+                <Key label="⌘/ctrl+click" desc="multi-select" />
+                <Key label="esc" desc="close preview / clear" />
                 <Key label="?" desc="toggle this panel" />
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* preview drawer */}
+      <PreviewPane
+        document={previewDoc}
+        inScope={previewDoc ? scope.has(previewDoc.id) : false}
+        onClose={() => setPreviewId(null)}
+        onToggleScope={(id) => store.toggle(id)}
+        onDelete={(id, name) => {
+          setPreviewId(null);
+          remove(id, name);
+        }}
+      />
 
       {/* floating action pill — jump to chat */}
       {inScope.length > 0 && (

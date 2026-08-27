@@ -15,7 +15,7 @@ status_router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 @status_router.get("/providers")
-async def provider_health():
+async def provider_health(_current_user: User = Depends(get_current_user)):
     return get_router().health_snapshot()
 
 

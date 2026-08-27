@@ -14,6 +14,13 @@ export default function OAuthCallbackPage() {
     const access = params.get("access_token");
     const refresh = params.get("refresh_token");
 
+    // Clear the fragment ASAP so tokens don't stay in history / referrer.
+    try {
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch {
+      /* noop */
+    }
+
     if (access && refresh) {
       tokenStore.set(access, refresh);
       router.replace("/chat");

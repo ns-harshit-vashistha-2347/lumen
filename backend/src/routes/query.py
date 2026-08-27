@@ -119,7 +119,9 @@ async def run_query(
 
 
 @query_router.post("/stream")
+@limiter.limit("30/minute")
 async def run_query_stream(
+    request: Request,
     payload: QueryRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -134,13 +136,17 @@ async def run_query_stream(
         history = await load_history(db, session.id)
 
     trace_id = new_trace_id()
-    partial = await astream_with_trace(retrieval_graph, {
-        "query": payload.query,
-        "top_k": payload.top_k,
-        "user_id": str(current_user.id),
-        "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
-        "chat_history": history,
-    }, trace_id)
+    try:
+        partial = await astream_with_trace(retrieval_graph, {
+            "query": payload.query,
+            "top_k": payload.top_k,
+            "user_id": str(current_user.id),
+            "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
+            "chat_history": history,
+        }, trace_id)
+    except Exception as exc:
+        logger.exception(f"[/query/stream] retrieval failed user_id={current_user.id}: {exc}")
+        raise HTTPException(status_code=500, detail="Retrieval pipeline failed") from exc
     chunks = _pick_chunks(partial)
     context = _build_context(chunks)
     complexity = partial.get("complexity", "complex")
@@ -168,17 +174,24 @@ async def run_query_stream(
         }
         yield json.dumps(header) + "\n"
         collected: list[str] = []
-        async for chunk in llm.astream(messages):
-            if chunk.content:
-                collected.append(chunk.content)
-                yield chunk.content
-        if session is not None:
-            await append_turn(
-                db, session,
-                user_content=payload.query,
-                assistant_content="".join(collected),
-                payload={"streamed": True},
-                trace_id=trace_id,
-            )
+        try:
+            async for chunk in llm.astream(messages):
+                if chunk.content:
+                    collected.append(chunk.content)
+                    yield chunk.content
+        except Exception as exc:
+            logger.exception(f"[/query/stream] llm stream failed: {exc}")
+            yield "\n[error: generation interrupted]"
+        if session is not None and collected:
+            try:
+                await append_turn(
+                    db, session,
+                    user_content=payload.query,
+                    assistant_content="".join(collected),
+                    payload={"streamed": True},
+                    trace_id=trace_id,
+                )
+            except Exception as exc:
+                logger.exception(f"[/query/stream] failed to persist turn: {exc}")
 
     return StreamingResponse(token_stream(), media_type="text/plain")

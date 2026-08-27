@@ -94,13 +94,14 @@ async def connect_repo(
         raise HTTPException(status_code=409, detail=f"{ref.full_name} is already connected")
 
     repo_id = uuid.uuid4()
+    default_branch = (payload.default_branch or "main").strip() or "main"
     repo = Repo(
         id=repo_id,
         user_id=current_user.id,
         provider="github",
         owner=ref.owner,
         name=ref.name,
-        default_branch=payload.default_branch or "main",
+        default_branch=default_branch,
         clone_url=ref.clone_url,
         is_private=bool(payload.token),
         encrypted_token=encrypt_token(payload.token) if payload.token else None,
@@ -154,8 +155,10 @@ async def refresh_repo(
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")
-    if repo.status in (RepoStatus.CLONING, RepoStatus.PARSING,
-                       RepoStatus.EMBEDDING, RepoStatus.STORING):
+    if repo.status in (
+        RepoStatus.PENDING, RepoStatus.CLONING, RepoStatus.PARSING,
+        RepoStatus.EMBEDDING, RepoStatus.STORING, RepoStatus.GRAPH_BUILDING,
+    ):
         raise HTTPException(status_code=409, detail=f"Repo is currently {repo.status.value}")
     repo.status = RepoStatus.PENDING
     repo.error_message = None

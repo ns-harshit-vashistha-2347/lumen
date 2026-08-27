@@ -39,16 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
 
         <Toaster
-          theme="dark"
           position="bottom-right"
           toastOptions={{
-            className: "!font-mono !text-xs",
-            style: {
-              background: "#101017",
-              border: "1px solid #26263a",
-              color: "#e9e6f2",
-              borderRadius: "6px",
-            },
+            className: "!font-mono !text-xs !bg-bg-soft !text-ink !border !border-chrome-border !rounded-md",
           }}
         />
       </body>

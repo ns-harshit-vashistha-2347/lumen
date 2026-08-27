@@ -188,15 +188,24 @@ async def stream_code_query(
             session_id=payload.session_id, repo_id=repo.id,
             seed_title=payload.query,
         )
+        if session.repo_id != repo.id:
+            raise HTTPException(
+                status_code=400,
+                detail="session_id belongs to a different repo",
+            )
         history = await load_history(db, session.id)
 
     trace_id = new_trace_id()
-    partial = await astream_with_trace(code_retrieval_graph, {
-        "repo_id": str(repo.id),
-        "query": payload.query,
-        "top_k": top_k,
-        "chat_history": history,
-    }, trace_id)
+    try:
+        partial = await astream_with_trace(code_retrieval_graph, {
+            "repo_id": str(repo.id),
+            "query": payload.query,
+            "top_k": top_k,
+            "chat_history": history,
+        }, trace_id)
+    except Exception as exc:
+        logger.exception(f"[/code-query/stream] retrieval failed user_id={current_user.id}: {exc}")
+        raise HTTPException(status_code=500, detail="Retrieval pipeline failed") from exc
 
     chunks = partial.get("dense_results") or []
     context = _build_context(chunks)
@@ -225,17 +234,24 @@ async def stream_code_query(
         }
         yield json.dumps(header) + "\n"
         collected: list[str] = []
-        async for chunk in llm.astream(messages):
-            if chunk.content:
-                collected.append(chunk.content)
-                yield chunk.content
-        if session is not None:
-            await append_turn(
-                db, session,
-                user_content=payload.query,
-                assistant_content="".join(collected),
-                payload={"streamed": True, "intent": intent},
-                trace_id=trace_id,
-            )
+        try:
+            async for chunk in llm.astream(messages):
+                if chunk.content:
+                    collected.append(chunk.content)
+                    yield chunk.content
+        except Exception as exc:
+            logger.exception(f"[/code-query/stream] llm stream failed: {exc}")
+            yield "\n[error: generation interrupted]"
+        if session is not None and collected:
+            try:
+                await append_turn(
+                    db, session,
+                    user_content=payload.query,
+                    assistant_content="".join(collected),
+                    payload={"streamed": True, "intent": intent},
+                    trace_id=trace_id,
+                )
+            except Exception as exc:
+                logger.exception(f"[/code-query/stream] failed to persist turn: {exc}")
 
     return StreamingResponse(token_stream(), media_type="text/plain")

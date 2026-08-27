@@ -98,7 +98,10 @@ async def rename_session(
     current_user: User = Depends(get_current_user),
 ):
     session = await _load_session(db, current_user, session_id)
-    session.title = payload.title
+    new_title = (payload.title or "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    session.title = new_title[:255]
     await db.commit()
     await db.refresh(session)
     return session

@@ -69,7 +69,10 @@ export function CommandPalette() {
       .list()
       .then(setDocs)
       .catch((err) => {
-        if (!(err instanceof ApiError)) throw err;
+        if (!(err instanceof ApiError)) {
+          // eslint-disable-next-line no-console
+          console.warn("command-palette: failed to load docs", err);
+        }
       });
   }, [open]);
 

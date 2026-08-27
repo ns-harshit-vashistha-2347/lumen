@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
+import uuid
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from src.core.db import get_db
 from src.core.deps import get_current_user
@@ -20,6 +21,13 @@ webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = get_logger(__name__)
 
 
+def _parse_uuid(raw: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid repo id")
+
+
 @webhook_router.post("/repos/{repo_id}/rotate-secret")
 async def rotate_secret(
     repo_id: str,
@@ -28,9 +36,9 @@ async def rotate_secret(
 ):
     """Generate/rotate the shared secret. Show the returned value ONCE in the
     UI; it's not readable back out later (only its hash comparison is used)."""
-    import uuid
+    repo_uuid = _parse_uuid(repo_id)
     repo = (await db.execute(
-        select(Repo).where(Repo.id == uuid.UUID(repo_id), Repo.user_id == current_user.id)
+        select(Repo).where(Repo.id == repo_uuid, Repo.user_id == current_user.id)
     )).scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")
@@ -53,10 +61,10 @@ async def github_push(
       Content type: application/json
       Secret: the value returned by /rotate-secret
       Events: Just the push event."""
-    import uuid
+    repo_uuid = _parse_uuid(repo_id)
     body = await request.body()
 
-    repo = (await db.execute(select(Repo).where(Repo.id == uuid.UUID(repo_id)))).scalar_one_or_none()
+    repo = (await db.execute(select(Repo).where(Repo.id == repo_uuid))).scalar_one_or_none()
     if not repo or not repo.webhook_secret:
         raise HTTPException(status_code=404, detail="Webhook not configured for this repo")
 
@@ -69,13 +77,21 @@ async def github_push(
     if x_github_event != "push":
         return {"ok": True, "ignored": x_github_event}
 
-    import json
-    payload = json.loads(body)
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload shape")
+
     new_sha = payload.get("after")
-    ref = payload.get("ref", "")
-    if not ref.endswith(f"/{repo.default_branch}"):
+    ref = payload.get("ref") or ""
+    # Match the full ref exactly so branches whose name is a suffix of another
+    # (e.g. "main" vs "mainline") don't collide.
+    if ref != f"refs/heads/{repo.default_branch}":
         return {"ok": True, "skipped": f"non-default branch {ref}"}
 
     reindex_repo_task.delay(str(repo.id), new_sha)
-    logger.info(f"[webhook] queued reindex for {repo.owner}/{repo.name} sha={new_sha[:7] if new_sha else '?'}")
+    short_sha = new_sha[:7] if isinstance(new_sha, str) and new_sha else "?"
+    logger.info(f"[webhook] queued reindex for {repo.owner}/{repo.name} sha={short_sha}")
     return {"ok": True, "queued": True}

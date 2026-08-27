@@ -124,6 +124,10 @@ export const api = {
   get: <T>(path: string, auth = true) => request<T>(path, { auth }),
   post: <T>(path: string, body?: unknown, auth = true) =>
     request<T>(path, { method: "POST", body, auth }),
+  patch: <T>(path: string, body?: unknown, auth = true) =>
+    request<T>(path, { method: "PATCH", body, auth }),
+  put: <T>(path: string, body?: unknown, auth = true) =>
+    request<T>(path, { method: "PUT", body, auth }),
   del: <T>(path: string, auth = true) =>
     request<T>(path, { method: "DELETE", auth }),
   upload: <T>(path: string, file: File, auth = true) => {

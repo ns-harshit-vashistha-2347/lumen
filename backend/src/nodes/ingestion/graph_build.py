@@ -207,7 +207,8 @@ def graph_build_node(state: dict) -> dict:
     all_symbols: list[_Sym] = []
     imports_resolved: list[tuple[str, str]] = []       # (from_file, to_file)
     imports_external: list[tuple[str, str]] = []       # (from_file, module)
-    calls_pending: list[tuple[str, str, str | None, str]] = []    # (caller_sym_id, callee_name, caller_file)
+    # (caller_sym_id, callee_name, receiver_or_None, caller_file)
+    calls_pending: list[tuple[str, str, str | None, str]] = []
 
     clone_root = Path(state["clone_path"])
     ctx = build_context(clone_root, {f.rel_path for f in files})
@@ -236,7 +237,7 @@ def graph_build_node(state: dict) -> dict:
 
     resolved_calls: list[tuple[str, str]] = []   # (caller_id, callee_id)
     unresolved_calls: list[tuple[str, str]] = [] # (caller_id, callee_name)
-    for caller_id, name, caller_file in calls_pending:
+    for caller_id, name, _recv, caller_file in calls_pending:
         local = by_name_local.get((caller_file, name))
         if local:
             resolved_calls.append((caller_id, local.id))

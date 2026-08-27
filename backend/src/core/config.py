@@ -137,9 +137,14 @@ class Settings(BaseSettings):
     GROQ_MODEL_LARGE: str = "openai/gpt-oss-20b"
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_SMALL: str = "gemini-2.0-flash-lite-001"
-    GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash-001"
-    GEMINI_MODEL_LARGE: str = "gemini-2.0-flash-001"
+    # small tier = classify/rewrite/compress/verify — highest call volume,
+    #   pick the model with the biggest RPM/RPD headroom on the free tier
+    # medium tier = generate_simple / default — balance quality vs volume
+    # large tier = generate_complex — best reasoning; tighter free-tier
+    #   limits are OK because llm_router fails over to Groq on 429
+    GEMINI_MODEL_SMALL: str = "gemini-2.5-flash-lite"
+    GEMINI_MODEL_MEDIUM: str = "gemini-2.5-flash"
+    GEMINI_MODEL_LARGE: str = "gemini-2.5-pro"
 
 
     QUERY_CLASSIFIER_ENABLED: bool = True

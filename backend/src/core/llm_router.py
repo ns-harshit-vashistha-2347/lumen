@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 DEFAULT_POLICY: dict[TaskTier, list[str]] = {
-    "small":  ["groq", "gemini"],
+    "small":  ["gemini", "groq"],
     "medium": ["gemini", "groq"],
     "large":  ["gemini", "groq"],
 }

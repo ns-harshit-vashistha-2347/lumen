@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 
+from src.core.cache import bump_bm25_version
 from src.core.config import settings
 from src.core.logging import get_logger
 from src.core.sync_db import get_sync_db
@@ -83,6 +84,13 @@ def code_store_node(state: dict) -> dict:
         db.commit()
     finally:
         db.close()
+
+    # Invalidate the per-repo BM25 index so the next code_bm25_node call
+    # rebuilds against this fresh corpus instead of the stale cache.
+    try:
+        bump_bm25_version(_collection_name(repo_id))
+    except Exception as exc:
+        logger.warning(f"[code_store] failed to bump BM25 version: {exc}")
 
     logger.info(f"[code_store] repo={repo_id} stored {len(ids)} chunks in {_collection_name(repo_id)}")
     return {"stored_chunk_count": len(ids)}

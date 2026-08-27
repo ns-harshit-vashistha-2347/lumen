@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -8,10 +8,13 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { MessageBubble, type ChatMessage } from "@/components/chat/message";
 import { ScopeBar } from "@/components/chat/scope-bar";
+import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
+import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { useRouter } from "next/navigation";
 import { queryApi } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
 import { useScope } from "@/lib/scope-store";
+import { chatSessionsApi } from "@/lib/chat-history";
 
 const SAMPLES = [
   "summarize the key points across every document in scope",
@@ -33,9 +36,38 @@ function ChatInner() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lastTraceId, setLastTraceId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadSession = useCallback(async (id: string | null) => {
+    setSessionId(id);
+    if (!id) {
+      setMessages([]);
+      setLastTraceId(null);
+      return;
+    }
+    try {
+      const msgs = await chatSessionsApi.messages(id);
+      setMessages(
+        msgs.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          at: new Date(m.created_at),
+          sources: (m.payload?.sources as ChatMessage["sources"]) || undefined,
+        }))
+      );
+      const lastAsst = [...msgs].reverse().find((m) => m.role === "assistant");
+      setLastTraceId(lastAsst?.trace_id || null);
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.detail);
+    }
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -74,6 +106,8 @@ function ChatInner() {
     }
     if (cmd === "/clear") {
       setMessages([]);
+      setSessionId(null);
+      setLastTraceId(null);
       setInput("");
       return true;
     }
@@ -118,7 +152,11 @@ function ChatInner() {
     try {
       const res = await queryApi.ask(text, {
         document_ids: scope.size > 0 ? [...scope] : undefined,
+        session_id: sessionId || undefined,
+        persist: true,
       });
+      if (res.session_id && !sessionId) setSessionId(res.session_id);
+      if (res.trace_id) setLastTraceId(res.trace_id);
       setMessages((m) =>
         m.map((msg) =>
           msg.id === loadingId
@@ -165,10 +203,33 @@ function ChatInner() {
 
       {/* scope bar */}
       <div className="relative z-10 border-b border-chrome-border bg-chrome/60 px-4 py-2.5 backdrop-blur-xl">
-        <div className="mx-auto max-w-3xl">
-          <ScopeBar />
+        <div className="mx-auto flex max-w-3xl items-center gap-2">
+          <div className="flex-1">
+            <ScopeBar />
+          </div>
+          <SidebarToggle onClick={() => setSidebarOpen(true)} />
+          <GraphButton onClick={() => setGraphOpen(true)} />
         </div>
       </div>
+
+      <SessionSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        kind="doc"
+        currentSessionId={sessionId}
+        onSelect={(id) => {
+          setSidebarOpen(false);
+          loadSession(id);
+        }}
+      />
+
+      <GraphVisualizer
+        open={graphOpen}
+        onClose={() => setGraphOpen(false)}
+        graphName="query"
+        traceId={lastTraceId}
+        title="doc chat"
+      />
 
       {/* messages */}
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto">

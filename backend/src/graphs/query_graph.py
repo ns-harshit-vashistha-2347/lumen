@@ -6,6 +6,7 @@ from langgraph.graph import START, END, StateGraph
 from src.core.config import settings
 from src.nodes.retrieval.bm25 import bm25_retrieval_node
 from src.nodes.retrieval.compression import compressed_node
+from src.nodes.retrieval.decompose import decompose_query_node
 from src.nodes.retrieval.dense import dense_retrieval_node
 from src.nodes.retrieval.fusion import fusion_node
 from src.nodes.retrieval.generation import generation_node
@@ -14,6 +15,7 @@ from src.nodes.retrieval.rewrite import query_rewrite_node
 from src.nodes.retrieval.verify import (
     expand_retrieval_node,
     finalize_node,
+    regenerate_node,
     should_retry,
     verify_node,
 )
@@ -31,9 +33,12 @@ class QueryState(TypedDict, total=False):
 
     user_id: str | None
     document_ids: list[str] | None
+    chat_history: list[dict]        # [{role, content}, ...] for multi-turn
 
     primary_query: str
     queries: list[str]
+    sub_questions: list[str]
+    is_multihop: bool
 
     retrieval_k: int
 
@@ -46,6 +51,7 @@ class QueryState(TypedDict, total=False):
     answer: Annotated[str, _keep_last]
     verdict: str
     verify_reason: str
+    unsupported_claims: list[str]
     correction_attempts: int
 
     complexity: str
@@ -70,6 +76,7 @@ def build_query_graph():
     graph.add_node("classify", classify_node)
     graph.add_node("mmr", mmr_node)
     graph.add_node("rewrite", query_rewrite_node)
+    graph.add_node("decompose", decompose_query_node)
     graph.add_node("dense", dense_retrieval_node)
     graph.add_node("bm25", bm25_retrieval_node)
     graph.add_node("fusion", fusion_node)
@@ -78,12 +85,14 @@ def build_query_graph():
     graph.add_node("generation", generation_node)
     graph.add_node("verify", verify_node)
     graph.add_node("expand_retrieval", expand_retrieval_node)
+    graph.add_node("regenerate", regenerate_node)
     graph.add_node("finalize", finalize_node)
 
     graph.add_edge(START, "prepare")
     graph.add_edge("prepare", "rewrite")
-    graph.add_edge("rewrite", "dense")
-    graph.add_edge("rewrite", "bm25")
+    graph.add_edge("rewrite", "decompose")
+    graph.add_edge("decompose", "dense")
+    graph.add_edge("decompose", "bm25")
     graph.add_edge("dense", "fusion")
     graph.add_edge("bm25", "fusion")
     graph.add_edge("fusion", "mmr")
@@ -104,9 +113,16 @@ def build_query_graph():
     graph.add_conditional_edges(
         "verify",
         should_retry,
-        {"retry": "expand_retrieval", "done": "finalize"},
+        {
+            "retry": "expand_retrieval",
+            "regenerate": "regenerate",
+            "done": "finalize",
+        },
     )
     graph.add_edge("expand_retrieval", "dense")
+    # Regenerate reuses the same sources; skip retrieval and land straight
+    # in finalize (verdict was reset to grounded inside regenerate_node).
+    graph.add_edge("regenerate", "finalize")
 
     graph.add_conditional_edges(
         "generation",
@@ -143,6 +159,7 @@ def build_retrieval_graph():
     graph.add_node("classify", classify_node)
     graph.add_node("mmr", mmr_node)
     graph.add_node("rewrite", query_rewrite_node)
+    graph.add_node("decompose", decompose_query_node)
     graph.add_node("dense", dense_retrieval_node)
     graph.add_node("bm25", bm25_retrieval_node)
     graph.add_node("fusion", fusion_node)
@@ -152,8 +169,9 @@ def build_retrieval_graph():
 
     graph.add_edge(START, "prepare")
     graph.add_edge("prepare", "rewrite")
-    graph.add_edge("rewrite", "dense")
-    graph.add_edge("rewrite", "bm25")
+    graph.add_edge("rewrite", "decompose")
+    graph.add_edge("decompose", "dense")
+    graph.add_edge("decompose", "bm25")
     graph.add_edge("dense", "fusion")
     graph.add_edge("bm25", "fusion")
     graph.add_edge("fusion", "mmr")

@@ -41,6 +41,11 @@ email-validator
 argon2-cffi
 
 pdfplumber
+# Optional OCR: extract text from images embedded in PDF/DOCX.
+# Requires the `tesseract` binary on the host — the parser gates on
+# a runtime import so a missing binary just skips OCR instead of failing.
+pytesseract
+Pillow
 
 gitpython
 tree-sitter

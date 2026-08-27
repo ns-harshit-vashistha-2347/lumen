@@ -176,8 +176,14 @@ class Settings(BaseSettings):
 
     MAX_UPLOAD_SIZE_MB: int = 50
 
+    # Requires the `tesseract` binary + pytesseract + Pillow installed.
+    # False → images become caption-only placeholder units so downstream
+    # retrieval can still cite the page/position of an image.
+    OCR_ENABLED: bool = True
+
     QUERY_REWRITE_ENABLED: bool = True
     QUERY_EXPANSION_COUNT: int = 0  # 0 = only the LLM-cleaned "primary" + raw
+    QUERY_DECOMPOSITION_ENABLED: bool = True   # multi-hop split
 
     COMPRESSION_ENABLED: bool = True
     COMPRESSION_MIN_CHARS: int = 4000

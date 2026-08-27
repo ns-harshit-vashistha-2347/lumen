@@ -10,6 +10,8 @@ class CodeQueryRequest(BaseModel):
     repo_id: uuid.UUID
     query: str
     top_k: Optional[int] = None
+    session_id: Optional[uuid.UUID] = None
+    persist: bool = False
 
 
 class CodeSourceChunk(BaseModel):
@@ -36,3 +38,5 @@ class CodeQueryResponse(BaseModel):
     intent: str
     graph_hits: list[GraphHit] = []
     sources: list[CodeSourceChunk] = []
+    session_id: Optional[uuid.UUID] = None
+    trace_id: Optional[str] = None

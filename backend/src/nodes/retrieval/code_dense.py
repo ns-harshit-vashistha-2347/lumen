@@ -40,31 +40,30 @@ def _rows_to_chunks(res) -> list[RetrievedChunk]:
 
 def code_dense_node(state: dict) -> dict:
     repo_id: str = state["repo_id"]
-    query = state.get("primary_query") or state["query"]
+    queries = state.get("queries") or [state.get("primary_query") or state["query"]]
     top_k = state.get("top_k", settings.CODE_QUERY_TOP_K)
 
     embedder = get_embedder()
-    q_emb = embedder.embed_query(query)
     coll = _collection_for(repo_id)
-
     focus_files: list[str] = state.get("focus_files") or []
+
     results: list[RetrievedChunk] = []
-
-    if focus_files:
-        try:
-            filtered = coll.query(
-                query_embeddings=[q_emb],
-                n_results=top_k,
-                where={"path": {"$in": focus_files}},
-            )
-            results.extend(_rows_to_chunks(filtered))
-        except Exception as exc:
-            logger.warning(f"[code_dense] filtered query failed: {exc}")
-
-    # Always run an unfiltered pass so we don't miss context outside
-    # the graph's opinion.
-    unfiltered = coll.query(query_embeddings=[q_emb], n_results=top_k)
-    results.extend(_rows_to_chunks(unfiltered))
+    for query in queries:
+        q_emb = embedder.embed_query(query)
+        if focus_files:
+            try:
+                filtered = coll.query(
+                    query_embeddings=[q_emb],
+                    n_results=top_k,
+                    where={"path": {"$in": focus_files}},
+                )
+                results.extend(_rows_to_chunks(filtered))
+            except Exception as exc:
+                logger.warning(f"[code_dense] filtered query failed: {exc}")
+        # Always run an unfiltered pass so we don't miss context outside
+        # the graph's opinion.
+        unfiltered = coll.query(query_embeddings=[q_emb], n_results=top_k)
+        results.extend(_rows_to_chunks(unfiltered))
 
     # De-dupe by chunk id, keep highest score
     dedup: dict[str, RetrievedChunk] = {}
@@ -73,5 +72,7 @@ def code_dense_node(state: dict) -> dict:
             dedup[c.id] = c
     final = sorted(dedup.values(), key=lambda c: c.score, reverse=True)[:top_k]
 
-    logger.info(f"[code_dense] repo={repo_id} returned {len(final)} chunks (top_k={top_k})")
-    return {"dense_results": final, "reranked_results": final}   # skip rerank for code; can add later
+    logger.info(
+        f"[code_dense] repo={repo_id} queries={len(queries)} returned {len(final)} chunks (top_k={top_k})"
+    )
+    return {"dense_results": final, "reranked_results": final}

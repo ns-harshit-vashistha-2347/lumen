@@ -28,6 +28,8 @@ export interface SourceChunk {
 export interface QueryResponse {
   answer: string;
   sources: SourceChunk[];
+  session_id?: string | null;
+  trace_id?: string | null;
 }
 
 export const docsApi = {
@@ -42,10 +44,20 @@ export const docsApi = {
 };
 
 export const queryApi = {
-  ask: (query: string, opts: { top_k?: number; document_ids?: string[] } = {}) => {
-    const { top_k = 5, document_ids } = opts;
+  ask: (
+    query: string,
+    opts: {
+      top_k?: number;
+      document_ids?: string[];
+      session_id?: string;
+      persist?: boolean;
+    } = {}
+  ) => {
+    const { top_k = 5, document_ids, session_id, persist } = opts;
     const body: Record<string, unknown> = { query, top_k };
     if (document_ids && document_ids.length > 0) body.document_ids = document_ids;
+    if (session_id) body.session_id = session_id;
+    if (persist) body.persist = true;
     return api.post<QueryResponse>("/query", body);
   },
 };
@@ -123,6 +135,8 @@ export interface CodeQueryResponse {
   intent: string;
   graph_hits: GraphHit[];
   sources: CodeSourceChunk[];
+  session_id?: string | null;
+  trace_id?: string | null;
 }
 
 export const reposApi = {
@@ -142,8 +156,17 @@ export const reposApi = {
 };
 
 export const codeQueryApi = {
-  ask: (repo_id: string, query: string, top_k?: number) =>
-    api.post<CodeQueryResponse>("/code-query", { repo_id, query, top_k }),
+  ask: (
+    repo_id: string,
+    query: string,
+    opts: { top_k?: number; session_id?: string; persist?: boolean } = {}
+  ) => {
+    const body: Record<string, unknown> = { repo_id, query };
+    if (opts.top_k) body.top_k = opts.top_k;
+    if (opts.session_id) body.session_id = opts.session_id;
+    if (opts.persist) body.persist = true;
+    return api.post<CodeQueryResponse>("/code-query", body);
+  },
   symbols: (repo_id: string, name: string) =>
     api.get<Array<Record<string, unknown>>>(
       `/code-query/${repo_id}/symbols?name=${encodeURIComponent(name)}`

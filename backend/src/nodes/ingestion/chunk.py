@@ -108,6 +108,39 @@ class RecursiveTokenChunker(BaseChunker):
 
         for unit_index, unit in enumerate(units):
 
+            # Tables and image OCR/captions are already small, self-contained
+            # units. Passing them through the token splitter risks slicing a
+            # markdown table in half; emit each as a single chunk instead.
+            kind = unit.metadata.get("content_kind")
+            if kind in ("table", "image"):
+                combined_metadata = {
+                    **unit.metadata,
+                    "document_id": document_id,
+                    "chunk_index": chunk_index,
+                }
+                combined_metadata["prev_chunk_id"] = (
+                    chunks[-1].id
+                    if chunks and chunks[-1].metadata.get("document_id") == document_id
+                    else None
+                )
+                if user_id is not None:
+                    combined_metadata["user_id"] = user_id
+                header = self._build_context_header(combined_metadata)
+                embedded_text = f"{header}\n\n{unit.content}" if header else unit.content
+                chunks.append(
+                    Chunk(
+                        id=_deterministic_chunk_id(document_id, unit_index, chunk_index),
+                        content=embedded_text,
+                        metadata={
+                            **combined_metadata,
+                            "raw_content": unit.content,
+                            "context_header": header,
+                        },
+                    )
+                )
+                chunk_index += 1
+                continue
+
             if self._looks_like_markdown(unit.content):
                 sections = self.markdown_splitter.split_text(
                     unit.content

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -21,7 +21,10 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
+import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
+import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { ApiError } from "@/lib/api";
+import { chatSessionsApi } from "@/lib/chat-history";
 import { cn } from "@/lib/cn";
 import {
   codeQueryApi,
@@ -60,9 +63,40 @@ function CodeChatInner() {
   const [messages, setMessages] = useState<CodeMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lastTraceId, setLastTraceId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadSession = useCallback(async (id: string | null) => {
+    setSessionId(id);
+    if (!id) {
+      setMessages([]);
+      setLastTraceId(null);
+      return;
+    }
+    try {
+      const msgs = await chatSessionsApi.messages(id);
+      setMessages(
+        msgs.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          at: new Date(m.created_at),
+          intent: (m.payload?.intent as string) || undefined,
+          graph_hits: (m.payload?.graph_hits as GraphHit[]) || undefined,
+          sources: (m.payload?.sources as CodeSourceChunk[]) || undefined,
+        }))
+      );
+      const lastAsst = [...msgs].reverse().find((m) => m.role === "assistant");
+      setLastTraceId(lastAsst?.trace_id || null);
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.detail);
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -119,7 +153,12 @@ function CodeChatInner() {
     setSending(true);
 
     try {
-      const res: CodeQueryResponse = await codeQueryApi.ask(repoId, text);
+      const res: CodeQueryResponse = await codeQueryApi.ask(repoId, text, {
+        session_id: sessionId || undefined,
+        persist: true,
+      });
+      if (res.session_id && !sessionId) setSessionId(res.session_id);
+      if (res.trace_id) setLastTraceId(res.trace_id);
       setMessages((m) =>
         m.map((msg) =>
           msg.id === loadingId
@@ -209,9 +248,31 @@ function CodeChatInner() {
             <span className="hidden sm:inline">
               files <span className="text-ink">{repo.indexed_files || repo.total_files}</span>
             </span>
+            <SidebarToggle onClick={() => setSidebarOpen(true)} />
+            <GraphButton onClick={() => setGraphOpen(true)} />
           </div>
         </div>
       </div>
+
+      <SessionSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        kind="code"
+        repoId={repoId}
+        currentSessionId={sessionId}
+        onSelect={(id) => {
+          setSidebarOpen(false);
+          loadSession(id);
+        }}
+      />
+
+      <GraphVisualizer
+        open={graphOpen}
+        onClose={() => setGraphOpen(false)}
+        graphName="code_query"
+        traceId={lastTraceId}
+        title={`${repo.owner}/${repo.name}`}
+      />
 
       {/* messages */}
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto">

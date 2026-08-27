@@ -25,8 +25,13 @@ class GeminiProvider(LLMProvider):
         return _cached_gemini(self._model_for_tier(tier), temperature)
 
     def is_rate_limit_error(self, exc: BaseException) -> tuple[bool, float | None]:
+        """Signal 'unhealthy → fail over' for rate limits AND for
+        model-not-found / permission-denied / server errors. The router
+        only fails over when this returns True, so anything we want Groq
+        to catch has to be listed here."""
         cls = type(exc).__name__.lower()
         msg = str(exc).lower()
+        # Rate-limit family
         if (
             "resourceexhausted" in cls
             or "quotaexceeded" in cls
@@ -36,6 +41,20 @@ class GeminiProvider(LLMProvider):
             or "rate limit" in msg
         ):
             return True, _extract_retry_after(exc)
+        # Model gone / no access / server side blip → try the other provider
+        if (
+            "notfound" in cls
+            or "modelnotfound" in cls
+            or "permissiondenied" in cls
+            or "unavailable" in cls
+            or "404" in msg
+            or "no longer available" in msg
+            or "not found" in msg
+            or "permission denied" in msg
+            or "503" in msg
+            or "500" in msg
+        ):
+            return True, None
         return False, None
 
 

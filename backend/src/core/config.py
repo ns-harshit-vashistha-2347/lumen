@@ -137,14 +137,15 @@ class Settings(BaseSettings):
     GROQ_MODEL_LARGE: str = "openai/gpt-oss-20b"
 
     GEMINI_API_KEY: str = ""
-    # small tier = classify/rewrite/compress/verify — highest call volume,
-    #   pick the model with the biggest RPM/RPD headroom on the free tier
-    # medium tier = generate_simple / default — balance quality vs volume
-    # large tier = generate_complex — best reasoning; tighter free-tier
-    #   limits are OK because llm_router fails over to Groq on 429
-    GEMINI_MODEL_SMALL: str = "gemini-2.5-flash-lite"
-    GEMINI_MODEL_MEDIUM: str = "gemini-2.5-flash"
-    GEMINI_MODEL_LARGE: str = "gemini-2.5-pro"
+    # Defaults chosen for broad account compatibility.
+    # Google has started 404-ing gemini-2.5-* for accounts created after a
+    # certain date; the 2.0 line is still universally reachable. Override
+    # via .env if your account has access to newer models.
+    # The llm_router fails over to Groq on 404 / 429 / unavailable so a
+    # dead model here is not fatal.
+    GEMINI_MODEL_SMALL: str = "gemini-2.0-flash-lite"
+    GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash"
+    GEMINI_MODEL_LARGE: str = "gemini-2.0-flash"
 
 
     QUERY_CLASSIFIER_ENABLED: bool = True

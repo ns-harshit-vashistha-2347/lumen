@@ -24,8 +24,9 @@ from src.nodes.retrieval.generation import (
     SYSTEM_PROMPT, _build_context, _history_messages,
 )
 from src.nodes.retrieval.graph_query import (
-    callers_of, callees_of, find_symbols, graph_stats, importers_of,
-    imports_from, list_files, list_symbols,
+    calls_ego, calls_subgraph, callers_of, callees_of, find_symbols,
+    graph_stats, importers_of, imports_ego, imports_from, imports_subgraph,
+    list_files, list_symbols,
 )
 from src.schemas.code_query import (
     CodeQueryRequest, CodeQueryResponse, CodeSourceChunk, GraphHit,
@@ -207,6 +208,38 @@ async def graph_kb_symbols(
 ):
     await _load_repo(db, current_user, repo_id)
     return list_symbols(str(repo_id), query=q, file=file, limit=limit, offset=offset)
+
+
+@code_query_router.get("/{repo_id}/graph/subgraph")
+async def graph_kb_subgraph(
+    repo_id: uuid.UUID,
+    kind: str = "calls",
+    limit: int = 120,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _load_repo(db, current_user, repo_id)
+    if kind == "imports":
+        return imports_subgraph(str(repo_id), limit=limit)
+    return calls_subgraph(str(repo_id), limit=limit)
+
+
+@code_query_router.get("/{repo_id}/graph/ego")
+async def graph_kb_ego(
+    repo_id: uuid.UUID,
+    kind: str = "calls",
+    id: str = "",
+    direction: str = "out",
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _load_repo(db, current_user, repo_id)
+    if not id:
+        raise HTTPException(status_code=400, detail="id required")
+    if kind == "imports":
+        return imports_ego(str(repo_id), id, direction=direction, limit=limit)
+    return calls_ego(str(repo_id), id, direction=direction, limit=limit)
 
 
 @code_query_router.post("/stream")

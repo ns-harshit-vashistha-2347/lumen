@@ -165,6 +165,161 @@ def list_symbols(
     ]
 
 
+def calls_subgraph(repo_id: str, limit: int = 120) -> dict:
+    """Top-N most connected symbols and every CALLS edge among them.
+    Shape: {nodes:[{id,label,kind,file,degree}], edges:[{source,target,type}]}"""
+    if not graph_available(repo_id):
+        return {"nodes": [], "edges": []}
+    limit = max(5, min(limit, 400))
+    with kuzu_connection(repo_id, create=False) as conn:
+        # Rank symbols by call-degree (in + out).
+        rank_q = (
+            "MATCH (s:Symbol) "
+            "WHERE s.kind <> 'unresolved' "
+            "OPTIONAL MATCH (s)-[o:CALLS]->() "
+            "OPTIONAL MATCH ()-[i:CALLS]->(s) "
+            "WITH s, count(DISTINCT o) + count(DISTINCT i) AS deg "
+            "WHERE deg > 0 "
+            "RETURN s.id, s.name, s.kind, s.file_path, deg "
+            "ORDER BY deg DESC LIMIT $lim"
+        )
+        rows = _rows(conn.execute(rank_q, {"lim": limit}))
+        nodes = [
+            {"id": r[0], "label": r[1], "kind": r[2],
+             "file": r[3], "degree": int(r[4])}
+            for r in rows
+        ]
+        ids = [n["id"] for n in nodes]
+        edges: list[dict] = []
+        if ids:
+            edge_q = (
+                "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) "
+                "WHERE a.id IN $ids AND b.id IN $ids "
+                "RETURN a.id, b.id"
+            )
+            for r in _rows(conn.execute(edge_q, {"ids": ids})):
+                edges.append({"source": r[0], "target": r[1], "type": "CALLS"})
+    return {"nodes": nodes, "edges": edges}
+
+
+def imports_subgraph(repo_id: str, limit: int = 120) -> dict:
+    """Top-N files by import-degree and every IMPORTS edge among them."""
+    if not graph_available(repo_id):
+        return {"nodes": [], "edges": []}
+    limit = max(5, min(limit, 400))
+    with kuzu_connection(repo_id, create=False) as conn:
+        rank_q = (
+            "MATCH (f:File) "
+            "OPTIONAL MATCH (f)-[o:IMPORTS]->() "
+            "OPTIONAL MATCH ()-[i:IMPORTS]->(f) "
+            "WITH f, count(DISTINCT o) + count(DISTINCT i) AS deg "
+            "WHERE deg > 0 "
+            "RETURN f.path, f.language, deg "
+            "ORDER BY deg DESC LIMIT $lim"
+        )
+        rows = _rows(conn.execute(rank_q, {"lim": limit}))
+        nodes = [
+            {"id": r[0], "label": r[0].rsplit("/", 1)[-1],
+             "kind": r[1] or "file", "file": r[0], "degree": int(r[2])}
+            for r in rows
+        ]
+        ids = [n["id"] for n in nodes]
+        edges: list[dict] = []
+        if ids:
+            edge_q = (
+                "MATCH (a:File)-[:IMPORTS]->(b:File) "
+                "WHERE a.path IN $ids AND b.path IN $ids "
+                "RETURN a.path, b.path"
+            )
+            for r in _rows(conn.execute(edge_q, {"ids": ids})):
+                edges.append({"source": r[0], "target": r[1], "type": "IMPORTS"})
+    return {"nodes": nodes, "edges": edges}
+
+
+def calls_ego(repo_id: str, node_id: str, direction: str = "out", limit: int = 50) -> dict:
+    """Immediate neighborhood of a Symbol via CALLS. direction: out|in|both."""
+    if not graph_available(repo_id):
+        return {"nodes": [], "edges": []}
+    limit = max(1, min(limit, 200))
+    with kuzu_connection(repo_id, create=False) as conn:
+        root_rows = _rows(conn.execute(
+            "MATCH (s:Symbol) WHERE s.id = $id "
+            "RETURN s.id, s.name, s.kind, s.file_path",
+            {"id": node_id},
+        ))
+        if not root_rows:
+            return {"nodes": [], "edges": []}
+        r = root_rows[0]
+        nodes: dict[str, dict] = {
+            r[0]: {"id": r[0], "label": r[1], "kind": r[2], "file": r[3], "degree": 0},
+        }
+        edges: list[dict] = []
+        if direction in ("out", "both"):
+            for row in _rows(conn.execute(
+                "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) "
+                "WHERE a.id = $id AND b.kind <> 'unresolved' "
+                "RETURN b.id, b.name, b.kind, b.file_path LIMIT $lim",
+                {"id": node_id, "lim": limit},
+            )):
+                nodes.setdefault(row[0], {"id": row[0], "label": row[1], "kind": row[2], "file": row[3], "degree": 0})
+                edges.append({"source": node_id, "target": row[0], "type": "CALLS"})
+        if direction in ("in", "both"):
+            for row in _rows(conn.execute(
+                "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) "
+                "WHERE b.id = $id "
+                "RETURN a.id, a.name, a.kind, a.file_path LIMIT $lim",
+                {"id": node_id, "lim": limit},
+            )):
+                nodes.setdefault(row[0], {"id": row[0], "label": row[1], "kind": row[2], "file": row[3], "degree": 0})
+                edges.append({"source": row[0], "target": node_id, "type": "CALLS"})
+    for e in edges:
+        nodes[e["source"]]["degree"] += 1
+        nodes[e["target"]]["degree"] += 1
+    return {"nodes": list(nodes.values()), "edges": edges}
+
+
+def imports_ego(repo_id: str, path: str, direction: str = "out", limit: int = 50) -> dict:
+    """Immediate neighborhood of a File via IMPORTS."""
+    if not graph_available(repo_id):
+        return {"nodes": [], "edges": []}
+    limit = max(1, min(limit, 200))
+    with kuzu_connection(repo_id, create=False) as conn:
+        root_rows = _rows(conn.execute(
+            "MATCH (f:File) WHERE f.path = $p RETURN f.path, f.language",
+            {"p": path},
+        ))
+        if not root_rows:
+            return {"nodes": [], "edges": []}
+        r = root_rows[0]
+        nodes: dict[str, dict] = {
+            r[0]: {"id": r[0], "label": r[0].rsplit("/", 1)[-1], "kind": r[1] or "file",
+                   "file": r[0], "degree": 0},
+        }
+        edges: list[dict] = []
+        if direction in ("out", "both"):
+            for row in _rows(conn.execute(
+                "MATCH (a:File)-[:IMPORTS]->(b:File) WHERE a.path = $p "
+                "RETURN b.path, b.language LIMIT $lim",
+                {"p": path, "lim": limit},
+            )):
+                nodes.setdefault(row[0], {"id": row[0], "label": row[0].rsplit("/", 1)[-1],
+                                          "kind": row[1] or "file", "file": row[0], "degree": 0})
+                edges.append({"source": path, "target": row[0], "type": "IMPORTS"})
+        if direction in ("in", "both"):
+            for row in _rows(conn.execute(
+                "MATCH (a:File)-[:IMPORTS]->(b:File) WHERE b.path = $p "
+                "RETURN a.path, a.language LIMIT $lim",
+                {"p": path, "lim": limit},
+            )):
+                nodes.setdefault(row[0], {"id": row[0], "label": row[0].rsplit("/", 1)[-1],
+                                          "kind": row[1] or "file", "file": row[0], "degree": 0})
+                edges.append({"source": row[0], "target": path, "type": "IMPORTS"})
+    for e in edges:
+        nodes[e["source"]]["degree"] += 1
+        nodes[e["target"]]["degree"] += 1
+    return {"nodes": list(nodes.values()), "edges": edges}
+
+
 def graph_query_node(state: dict) -> dict:
     """LangGraph node: dispatch based on state['code_intent'] populated by
     the classifier. Returns state['graph_hits'] — list of {path, snippet_hint}

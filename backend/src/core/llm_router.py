@@ -4,18 +4,24 @@ from typing import Any, Iterable
 
 from src.core.config import settings
 from src.core.logging import get_logger
-from src.core.providers import GeminiProvider, GroqProvider, LLMProvider
+from src.core.providers import (
+    CerebrasProvider, GeminiProvider, GroqProvider, LLMProvider, OpenRouterProvider,
+)
 from src.core.providers.base import TASK_TO_TIER, RateLimitedError, TaskTier
 
 logger = get_logger(__name__)
 
 
+def _parse_policy(csv: str) -> list[str]:
+    return [p.strip() for p in csv.split(",") if p.strip()]
 
-DEFAULT_POLICY: dict[TaskTier, list[str]] = {
-    "small":  ["gemini", "groq"],
-    "medium": ["gemini", "groq"],
-    "large":  ["gemini", "groq"],
-}
+
+def _load_policy() -> dict[TaskTier, list[str]]:
+    return {
+        "small":  _parse_policy(settings.LLM_POLICY_SMALL),
+        "medium": _parse_policy(settings.LLM_POLICY_MEDIUM),
+        "large":  _parse_policy(settings.LLM_POLICY_LARGE),
+    }
 
 DEFAULT_COOLDOWN_SECONDS = 60.0
 
@@ -140,8 +146,10 @@ class LLMRouter:
         self._providers: dict[str, LLMProvider] = {
             "groq": GroqProvider(),
             "gemini": GeminiProvider(),
+            "openrouter": OpenRouterProvider(),
+            "cerebras": CerebrasProvider(),
         }
-        self._policy = policy or DEFAULT_POLICY
+        self._policy = policy or _load_policy()
 
     def register(self, provider: LLMProvider) -> None:
         self._providers[provider.name] = provider
@@ -151,7 +159,7 @@ class LLMRouter:
         configured AND currently healthy. If ALL are cooling down, return
         the full configured list anyway (better to try and fail than to
         refuse service)."""
-        preferred = self._policy.get(tier, self._policy["medium"])
+        preferred = self._policy.get(tier) or self._policy.get("medium", [])
         configured = [
             self._providers[name] for name in preferred
             if name in self._providers and self._providers[name].is_configured()

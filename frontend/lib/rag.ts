@@ -222,7 +222,40 @@ export const codeQueryApi = {
     api.get<GraphSymbolEntry[]>(
       `/code-query/${repo_id}/graph/symbols?q=${encodeURIComponent(q)}&file=${encodeURIComponent(file)}&limit=${limit}&offset=${offset}`
     ),
+  graphSubgraph: (repo_id: string, kind: "calls" | "imports", limit = 120) =>
+    api.get<GraphSubgraph>(
+      `/code-query/${repo_id}/graph/subgraph?kind=${kind}&limit=${limit}`
+    ),
+  graphEgo: (
+    repo_id: string,
+    kind: "calls" | "imports",
+    id: string,
+    direction: "out" | "in" | "both" = "out",
+    limit = 50,
+  ) =>
+    api.get<GraphSubgraph>(
+      `/code-query/${repo_id}/graph/ego?kind=${kind}&id=${encodeURIComponent(id)}&direction=${direction}&limit=${limit}`
+    ),
 };
+
+export interface GraphSubgraphNode {
+  id: string;
+  label: string;
+  kind: string;
+  file: string | null;
+  degree: number;
+}
+
+export interface GraphSubgraphEdge {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface GraphSubgraph {
+  nodes: GraphSubgraphNode[];
+  edges: GraphSubgraphEdge[];
+}
 
 export interface GraphStats {
   available: boolean;

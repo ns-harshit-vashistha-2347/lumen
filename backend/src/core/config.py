@@ -147,6 +147,26 @@ class Settings(BaseSettings):
     GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash"
     GEMINI_MODEL_LARGE: str = "gemini-2.0-flash"
 
+    # OpenRouter — single key, dozens of models; many free-tier.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL_SMALL: str = "meta-llama/llama-3.2-3b-instruct:free"
+    OPENROUTER_MODEL_MEDIUM: str = "meta-llama/llama-3.3-70b-instruct:free"
+    OPENROUTER_MODEL_LARGE: str = "deepseek/deepseek-chat-v3.1:free"
+
+    # Cerebras — very fast Llama on custom silicon.
+    CEREBRAS_API_KEY: str = ""
+    CEREBRAS_BASE_URL: str = "https://api.cerebras.ai/v1"
+    CEREBRAS_MODEL_SMALL: str = "llama3.1-8b"
+    CEREBRAS_MODEL_MEDIUM: str = "llama-3.3-70b"
+    CEREBRAS_MODEL_LARGE: str = "llama-3.3-70b"
+
+    # Provider policy per tier — comma-separated names in preferred order.
+    # Set in .env to change failover ordering without touching code.
+    LLM_POLICY_SMALL: str = "groq,cerebras,openrouter,gemini"
+    LLM_POLICY_MEDIUM: str = "groq,cerebras,openrouter,gemini"
+    LLM_POLICY_LARGE: str = "groq,openrouter,gemini,cerebras"
+
 
     QUERY_CLASSIFIER_ENABLED: bool = True
 

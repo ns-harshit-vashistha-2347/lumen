@@ -19,6 +19,7 @@ langchain-community
 langchain-huggingface
 slowapi
 langchain-google-genai
+langchain-openai
 langchain-text-splitters
 
 chromadb

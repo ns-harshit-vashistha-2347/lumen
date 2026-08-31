@@ -1,18 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  X, Loader2, Database, FileCode, Sigma, Network,
-  ArrowUpRight, ArrowDownLeft, Search,
+  X, Loader2, Database, Network, GitBranch, RefreshCw, Search,
+  Home, ChevronRight, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { ApiError } from "@/lib/api";
 import {
   codeQueryApi,
-  type GraphFileEntry,
   type GraphStats,
-  type GraphSymbolEntry,
+  type GraphSubgraph,
+  type GraphSubgraphEdge,
+  type GraphSubgraphNode,
 } from "@/lib/rag";
 
 interface Props {
@@ -22,111 +23,96 @@ interface Props {
   title?: string;
 }
 
-type Tab = "files" | "symbols";
+type Kind = "calls" | "imports";
+type Direction = "out" | "in" | "both";
 
-interface SymbolDetail {
-  symbol: GraphSymbolEntry;
-  callers: GraphSymbolEntry[];
-  callees: GraphSymbolEntry[];
-  loading: boolean;
-}
+interface Pos { x: number; y: number; vx: number; vy: number }
 
-interface FileDetail {
-  path: string;
-  importsFiles: string[];
-  importsModules: string[];
-  importers: string[];
-  loading: boolean;
-}
+const W = 900;
+const H = 620;
 
 export function KbBrowser({ open, onClose, repoId, title }: Props) {
-  const [tab, setTab] = useState<Tab>("symbols");
   const [stats, setStats] = useState<GraphStats | null>(null);
-  const [files, setFiles] = useState<GraphFileEntry[]>([]);
-  const [symbols, setSymbols] = useState<GraphSymbolEntry[]>([]);
-  const [query, setQuery] = useState("");
-  const [fileFilter, setFileFilter] = useState<string>("");
+  const [kind, setKind] = useState<Kind>("calls");
+  const [limit, setLimit] = useState(120);
+  const [graph, setGraph] = useState<GraphSubgraph | null>(null);
   const [loading, setLoading] = useState(false);
-  const [symbolDetail, setSymbolDetail] = useState<SymbolDetail | null>(null);
-  const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState("");
+  // Focus mode: when set, the canvas shows only this node + its neighbors.
+  // Clicking another node swaps focus (auto-closing the previous one).
+  const [focus, setFocus] = useState<GraphSubgraphNode | null>(null);
+  const [direction, setDirection] = useState<Direction>("out");
+  const [trail, setTrail] = useState<GraphSubgraphNode[]>([]);
 
   const loadStats = useCallback(async () => {
-    try {
-      setStats(await codeQueryApi.graphStats(repoId));
-    } catch (err) {
-      if (err instanceof ApiError && stats == null) setStats({
-        available: false, files: 0, symbols: 0, calls: 0, imports: 0,
-      });
-    }
-  }, [repoId, stats]);
+    try { setStats(await codeQueryApi.graphStats(repoId)); } catch { /* noop */ }
+  }, [repoId]);
 
-  const loadList = useCallback(async () => {
+  const loadOverview = useCallback(async () => {
     setLoading(true);
+    setSelected(null);
     try {
-      if (tab === "files") {
-        setFiles(await codeQueryApi.graphFiles(repoId, query));
-      } else {
-        setSymbols(await codeQueryApi.graphSymbols(repoId, query, fileFilter));
-      }
+      setGraph(await codeQueryApi.graphSubgraph(repoId, kind, limit));
     } catch (err) {
       if (err instanceof ApiError) console.warn(err.detail);
+      setGraph({ nodes: [], edges: [] });
     } finally {
       setLoading(false);
     }
-  }, [repoId, tab, query, fileFilter]);
+  }, [repoId, kind, limit]);
 
+  const loadEgo = useCallback(async (node: GraphSubgraphNode) => {
+    setLoading(true);
+    setSelected(node.id);
+    try {
+      setGraph(await codeQueryApi.graphEgo(repoId, kind, node.id, direction, 50));
+    } catch (err) {
+      if (err instanceof ApiError) console.warn(err.detail);
+      setGraph({ nodes: [node], edges: [] });
+    } finally {
+      setLoading(false);
+    }
+  }, [repoId, kind, direction]);
+
+  // When kind/limit changes, drop focus and reload the overview.
   useEffect(() => {
     if (!open) return;
     loadStats();
-  }, [open, loadStats]);
+    setFocus(null);
+    setTrail([]);
+    loadOverview();
+  }, [open, kind, limit, loadStats, loadOverview]);
 
+  // When focus/direction changes, load that node's neighborhood.
   useEffect(() => {
-    if (!open) return;
-    const id = setTimeout(loadList, query || fileFilter ? 200 : 0);
-    return () => clearTimeout(id);
-  }, [open, loadList, query, fileFilter]);
+    if (!open || !focus) return;
+    loadEgo(focus);
+  }, [open, focus, direction, loadEgo]);
 
-  async function openSymbol(s: GraphSymbolEntry) {
-    setSymbolDetail({ symbol: s, callers: [], callees: [], loading: true });
-    setFileDetail(null);
-    try {
-      const [callers, callees] = await Promise.all([
-        codeQueryApi.callers(repoId, s.name),
-        codeQueryApi.callees(repoId, s.name),
-      ]);
-      setSymbolDetail({
-        symbol: s,
-        callers: callers as unknown as GraphSymbolEntry[],
-        callees: callees as unknown as GraphSymbolEntry[],
-        loading: false,
-      });
-    } catch {
-      setSymbolDetail((d) => (d ? { ...d, loading: false } : d));
+  function onNodeClick(node: GraphSubgraphNode) {
+    if (focus?.id === node.id) return;
+    if (focus) {
+      // Swapping focus — push previous onto the breadcrumb.
+      setTrail((t) => (t.length && t[t.length - 1].id === focus.id ? t : [...t, focus]));
     }
+    setFocus(node);
   }
 
-  async function openFile(f: GraphFileEntry) {
-    setFileDetail({
-      path: f.path, importsFiles: [], importsModules: [], importers: [], loading: true,
+  function goHome() {
+    setFocus(null);
+    setTrail([]);
+    loadOverview();
+  }
+
+  function goBack() {
+    setTrail((t) => {
+      const next = t.slice(0, -1);
+      const prev = t[t.length - 1];
+      if (prev) setFocus(prev);
+      else { setFocus(null); loadOverview(); }
+      return next;
     });
-    setSymbolDetail(null);
-    try {
-      const [outward, inward] = await Promise.all([
-        codeQueryApi.imports(repoId, f.path, "from"),
-        codeQueryApi.imports(repoId, f.path, "to"),
-      ]);
-      const out = outward as { files?: string[]; modules?: string[] };
-      const inn = inward as { importers?: string[] };
-      setFileDetail({
-        path: f.path,
-        importsFiles: out.files || [],
-        importsModules: out.modules || [],
-        importers: inn.importers || [],
-        loading: false,
-      });
-    } catch {
-      setFileDetail((d) => (d ? { ...d, loading: false } : d));
-    }
   }
 
   if (!open) return null;
@@ -138,7 +124,7 @@ export function KbBrowser({ open, onClose, repoId, title }: Props) {
         onClick={onClose}
         aria-label="close"
       />
-      <aside className="relative h-full w-full max-w-3xl overflow-hidden border-l border-chrome-border bg-bg-soft/95 backdrop-blur-xl">
+      <aside className="relative flex h-full w-full max-w-5xl flex-col overflow-hidden border-l border-chrome-border bg-bg-soft/95 backdrop-blur-xl">
         <header className="flex items-center justify-between border-b border-chrome-border px-4 py-2.5">
           <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-dim">
             <Database className="h-3.5 w-3.5 text-mk-green" />
@@ -161,83 +147,422 @@ export function KbBrowser({ open, onClose, repoId, title }: Props) {
 
         <StatsRow stats={stats} />
 
-        <div className="flex items-center gap-1 border-b border-chrome-border/60 px-3 pt-2">
-          <TabBtn active={tab === "symbols"} onClick={() => setTab("symbols")}>
-            <Sigma className="h-3 w-3" /> symbols
-          </TabBtn>
-          <TabBtn active={tab === "files"} onClick={() => setTab("files")}>
-            <FileCode className="h-3 w-3" /> files
-          </TabBtn>
-        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-chrome-border/60 px-3 py-2 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-dim">
+          <div className="flex gap-1">
+            <Toggle active={kind === "calls"} onClick={() => setKind("calls")}>
+              <Network className="h-3 w-3" /> calls
+            </Toggle>
+            <Toggle active={kind === "imports"} onClick={() => setKind("imports")}>
+              <GitBranch className="h-3 w-3" /> imports
+            </Toggle>
+          </div>
 
-        <div className="flex items-center gap-2 border-b border-chrome-border/60 px-3 py-2">
-          <div className="flex flex-1 items-center gap-2 rounded border border-chrome-border bg-bg-raised px-2 py-1">
+          {!focus ? (
+            <label className="ml-2 flex items-center gap-2 normal-case tracking-normal text-ink-faint">
+              <span>top</span>
+              <input
+                type="range"
+                min={20}
+                max={300}
+                step={10}
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value))}
+                className="w-32 accent-mk-green"
+              />
+              <span className="w-8 text-right text-ink">{limit}</span>
+            </label>
+          ) : (
+            <div className="ml-2 flex items-center gap-1">
+              <Toggle active={direction === "out"} onClick={() => setDirection("out")}>
+                <ArrowDownLeft className="h-3 w-3" /> children
+              </Toggle>
+              <Toggle active={direction === "in"} onClick={() => setDirection("in")}>
+                <ArrowUpRight className="h-3 w-3" /> parents
+              </Toggle>
+              <Toggle active={direction === "both"} onClick={() => setDirection("both")}>
+                <ArrowLeftRight className="h-3 w-3" /> both
+              </Toggle>
+            </div>
+          )}
+
+          <div className="ml-2 flex items-center gap-1.5 rounded border border-chrome-border bg-bg-raised px-2 py-1 normal-case tracking-normal">
             <Search className="h-3 w-3 text-ink-faint" />
             <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={tab === "symbols" ? "symbol name…" : "file path…"}
-              className="flex-1 bg-transparent font-mono text-[12px] text-ink placeholder:text-ink-faint focus:outline-none"
+              value={highlight}
+              onChange={(e) => setHighlight(e.target.value)}
+              placeholder="highlight…"
+              className="w-40 bg-transparent text-[12px] text-ink placeholder:text-ink-faint focus:outline-none"
             />
           </div>
-          {tab === "symbols" && fileFilter && (
-            <button
-              onClick={() => setFileFilter("")}
-              className="rounded border border-chrome-border px-2 py-1 font-mono text-[10px] text-ink-dim hover:border-danger/50 hover:text-danger"
-            >
-              file: {shorten(fileFilter, 24)} ×
-            </button>
-          )}
+
+          <button
+            onClick={focus ? () => loadEgo(focus) : loadOverview}
+            className="ml-auto inline-flex items-center gap-1 rounded border border-chrome-border px-2 py-1 hover:border-mk-green/50 hover:text-mk-green"
+          >
+            <RefreshCw className="h-3 w-3" /> refresh
+          </button>
         </div>
 
-        <div className="flex h-[calc(100vh-13.5rem)]">
-          <div className="w-1/2 overflow-y-auto border-r border-chrome-border/60">
-            {loading ? (
-              <p className="flex items-center gap-2 px-3 py-4 font-mono text-[11.5px] text-ink-dim">
-                <Loader2 className="h-3 w-3 animate-spin" /> loading…
-              </p>
-            ) : tab === "symbols" ? (
-              <SymbolList
-                symbols={symbols}
-                activeId={symbolDetail?.symbol.id}
-                onPick={openSymbol}
-              />
-            ) : (
-              <FileList
-                files={files}
-                activePath={fileDetail?.path}
-                onPick={openFile}
-                onFilter={(p) => {
-                  setFileFilter(p);
-                  setTab("symbols");
-                }}
-              />
-            )}
-          </div>
+        {focus && (
+          <Breadcrumb
+            trail={trail}
+            focus={focus}
+            onHome={goHome}
+            onBack={goBack}
+            onJump={(node, idx) => {
+              setTrail((t) => t.slice(0, idx));
+              setFocus(node);
+            }}
+          />
+        )}
 
-          <div className="w-1/2 overflow-y-auto">
-            {symbolDetail && (
-              <SymbolDetailPane detail={symbolDetail} onPick={openSymbol} />
-            )}
-            {fileDetail && (
-              <FileDetailPane
-                detail={fileDetail}
-                onPick={(p) =>
-                  openFile({ path: p, language: null, symbol_count: 0 })
-                }
-              />
-            )}
-            {!symbolDetail && !fileDetail && (
-              <p className="px-3 py-4 font-mono text-[11.5px] text-ink-faint">
-                select an item to see relationships.
-              </p>
-            )}
-          </div>
+        <div className="relative flex-1 overflow-hidden bg-bg">
+          {loading ? (
+            <div className="flex h-full items-center justify-center font-mono text-[11.5px] text-ink-dim">
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              building layout…
+            </div>
+          ) : graph && graph.nodes.length ? (
+            <ForceGraph
+              graph={graph}
+              selected={selected}
+              onSelect={setSelected}
+              onExpand={onNodeClick}
+              highlight={highlight}
+              kind={kind}
+              focusId={focus?.id ?? null}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center px-6 text-center font-mono text-[11.5px] text-ink-faint">
+              {kind === "calls"
+                ? "no CALLS edges in the graph yet."
+                : "no IMPORTS edges in the graph yet."}
+            </div>
+          )}
         </div>
       </aside>
     </div>
   );
 }
+
+function ForceGraph({
+  graph,
+  selected,
+  onSelect,
+  onExpand,
+  highlight,
+  kind,
+  focusId,
+}: {
+  graph: GraphSubgraph;
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+  onExpand: (node: GraphSubgraphNode) => void;
+  highlight: string;
+  kind: Kind;
+  focusId: string | null;
+}) {
+  const positions = useLayout(graph);
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const dragId = useRef<string | null>(null);
+  const dragOff = useRef({ x: 0, y: 0 });
+  const panning = useRef<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [, force] = useState(0); // for re-renders while dragging
+
+  const neighbors = useMemo(() => {
+    const s = new Set<string>();
+    if (!selected) return s;
+    for (const e of graph.edges) {
+      if (e.source === selected) s.add(e.target);
+      if (e.target === selected) s.add(e.source);
+    }
+    return s;
+  }, [graph.edges, selected]);
+
+  const hi = highlight.trim().toLowerCase();
+
+  function nodeScreenPoint(e: React.PointerEvent) {
+    const svg = svgRef.current!;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM()?.inverse();
+    return ctm ? pt.matrixTransform(ctm) : { x: 0, y: 0 };
+  }
+
+  function toGraphCoords(sx: number, sy: number) {
+    return { x: (sx - view.x) / view.k, y: (sy - view.y) / view.k };
+  }
+
+  const selectedNode = selected ? graph.nodes.find((n) => n.id === selected) : null;
+
+  return (
+    <div className="relative h-full w-full">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        className="h-full w-full touch-none select-none"
+        onWheel={(e) => {
+          e.preventDefault();
+          const p = nodeScreenPoint(e as unknown as React.PointerEvent);
+          const g = toGraphCoords(p.x, p.y);
+          const nextK = Math.min(4, Math.max(0.3, view.k * (e.deltaY < 0 ? 1.1 : 0.9)));
+          setView({ k: nextK, x: p.x - g.x * nextK, y: p.y - g.y * nextK });
+        }}
+        onPointerDown={(e) => {
+          const p = nodeScreenPoint(e);
+          panning.current = { x: p.x - view.x, y: p.y - view.y };
+        }}
+        onPointerMove={(e) => {
+          if (dragId.current) {
+            const p = nodeScreenPoint(e);
+            const g = toGraphCoords(p.x, p.y);
+            const pos = positions.get(dragId.current)!;
+            pos.x = g.x - dragOff.current.x;
+            pos.y = g.y - dragOff.current.y;
+            pos.vx = pos.vy = 0;
+            force((n) => n + 1);
+            return;
+          }
+          if (panning.current) {
+            const p = nodeScreenPoint(e);
+            setView((v) => ({ ...v, x: p.x - panning.current!.x, y: p.y - panning.current!.y }));
+          }
+        }}
+        onPointerUp={() => { dragId.current = null; panning.current = null; }}
+        onPointerLeave={() => { dragId.current = null; panning.current = null; }}
+        onClick={(e) => { if (e.target === svgRef.current) onSelect(null); }}
+      >
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+        </defs>
+
+        <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          {graph.edges.map((e, i) => {
+            const a = positions.get(e.source);
+            const b = positions.get(e.target);
+            if (!a || !b) return null;
+            const dim = selected && !(e.source === selected || e.target === selected);
+            return (
+              <line
+                key={i}
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                strokeWidth={1 / view.k}
+                className={cn(
+                  "text-chrome-border/60",
+                  dim ? "opacity-15" : "opacity-70",
+                  e.source === selected && "text-mk-yellow opacity-90",
+                  e.target === selected && "text-mk-purple opacity-90",
+                )}
+                stroke="currentColor"
+                markerEnd="url(#arrow)"
+              />
+            );
+          })}
+
+          {graph.nodes.map((n) => {
+            const p = positions.get(n.id);
+            if (!p) return null;
+            const r = 4 + Math.sqrt(n.degree) * 2.2;
+            const isSel = selected === n.id;
+            const isN = neighbors.has(n.id);
+            const isMatch = hi && n.label.toLowerCase().includes(hi);
+            const dim = (selected && !isSel && !isN) || (hi && !isMatch);
+            const fill = kindColor(kind, n.kind);
+            return (
+              <g
+                key={n.id}
+                transform={`translate(${p.x} ${p.y})`}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  panning.current = null;
+                  const sp = nodeScreenPoint(e);
+                  const gp = toGraphCoords(sp.x, sp.y);
+                  dragOff.current = { x: gp.x - p.x, y: gp.y - p.y };
+                  dragId.current = n.id;
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(n.id);
+                  onExpand(n);
+                }}
+                className="cursor-pointer"
+              >
+                <circle
+                  r={n.id === focusId ? r + 3 : r}
+                  fill={fill}
+                  strokeWidth={
+                    n.id === focusId ? 2.5 / view.k
+                      : isSel ? 2 / view.k
+                      : isMatch ? 1.5 / view.k
+                      : 0.75 / view.k
+                  }
+                  stroke={
+                    n.id === focusId ? "#facc15"
+                      : isSel ? "#fff"
+                      : isMatch ? "#facc15"
+                      : "#0b0b0f"
+                  }
+                  opacity={dim ? 0.2 : 0.95}
+                />
+                {(n.id === focusId || isSel || isN || isMatch || view.k > 1.1 || focusId) && (
+                  <text
+                    x={r + 3}
+                    y={3}
+                    fontSize={(n.id === focusId ? 12 : 10) / view.k}
+                    className="pointer-events-none fill-current font-mono text-ink"
+                  >
+                    {n.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+
+      <div className="pointer-events-none absolute bottom-2 left-2 font-mono text-[10px] text-ink-faint">
+        {graph.nodes.length} nodes · {graph.edges.length} edges · click node to expand · scroll = zoom · drag = pan / move
+      </div>
+
+      {selectedNode && (
+        <div className="absolute bottom-2 right-2 max-w-sm rounded border border-chrome-border bg-bg-soft/95 p-3 font-mono text-[11.5px] shadow-block backdrop-blur">
+          <p className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: kindColor(kind, selectedNode.kind) }}
+            />
+            <span className="text-mk-pink">{selectedNode.label}</span>
+            <span className="text-[10px] text-ink-faint">({selectedNode.kind})</span>
+          </p>
+          {selectedNode.file && (
+            <p className="mt-0.5 truncate text-[10.5px] text-ink-dim" title={selectedNode.file}>
+              {selectedNode.file}
+            </p>
+          )}
+          <p className="mt-1 text-[10px] text-ink-faint">
+            degree <span className="text-ink">{selectedNode.degree}</span>
+            {" · "}
+            neighbors <span className="text-ink">{neighbors.size}</span>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -------- layout ----------------------------------------------------------
+
+function useLayout(graph: GraphSubgraph) {
+  return useMemo(() => {
+    const positions = new Map<string, Pos>();
+    const n = graph.nodes.length;
+    if (n === 0) return positions;
+
+    // Seed on a circle so we don't start from a singularity.
+    const cx = W / 2, cy = H / 2;
+    const r0 = Math.min(W, H) * 0.35;
+    graph.nodes.forEach((node, i) => {
+      const a = (i / n) * Math.PI * 2;
+      positions.set(node.id, {
+        x: cx + r0 * Math.cos(a),
+        y: cy + r0 * Math.sin(a),
+        vx: 0, vy: 0,
+      });
+    });
+
+    // Fruchterman-Reingold-ish. Iteration count scales down with node count.
+    const area = W * H;
+    const k = Math.sqrt(area / n) * 0.7;
+    const iters = Math.max(80, Math.min(220, Math.round(2400 / Math.sqrt(n))));
+    let temp = Math.min(W, H) * 0.15;
+    const cooling = temp / iters;
+
+    const edges = graph.edges.filter(
+      (e) => positions.has(e.source) && positions.has(e.target),
+    );
+
+    for (let step = 0; step < iters; step++) {
+      // Repulsion: O(n^2). Fine for n<=300.
+      const arr = Array.from(positions.values());
+      const ids = Array.from(positions.keys());
+      for (let i = 0; i < arr.length; i++) {
+        arr[i].vx = 0;
+        arr[i].vy = 0;
+      }
+      for (let i = 0; i < arr.length; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          let dx = arr[i].x - arr[j].x;
+          let dy = arr[i].y - arr[j].y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 0.01) { dx = Math.random(); dy = Math.random(); d2 = dx * dx + dy * dy; }
+          const d = Math.sqrt(d2);
+          const rep = (k * k) / d;
+          const fx = (dx / d) * rep;
+          const fy = (dy / d) * rep;
+          arr[i].vx += fx; arr[i].vy += fy;
+          arr[j].vx -= fx; arr[j].vy -= fy;
+        }
+      }
+      // Attraction along edges
+      for (const e of edges) {
+        const a = positions.get(e.source)!;
+        const b = positions.get(e.target)!;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const att = (d * d) / k;
+        const fx = (dx / d) * att;
+        const fy = (dy / d) * att;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+      // Apply, cap by temperature, clamp to canvas.
+      for (let i = 0; i < arr.length; i++) {
+        const p = arr[i];
+        const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 0.01;
+        p.x += (p.vx / speed) * Math.min(speed, temp);
+        p.y += (p.vy / speed) * Math.min(speed, temp);
+        p.x = Math.max(20, Math.min(W - 20, p.x));
+        p.y = Math.max(20, Math.min(H - 20, p.y));
+        void ids;
+      }
+      temp = Math.max(0.5, temp - cooling);
+    }
+    return positions;
+  }, [graph]);
+}
+
+function kindColor(view: Kind, kind: string): string {
+  if (view === "imports") {
+    switch (kind) {
+      case "python": return "#22c55e";
+      case "typescript":
+      case "javascript":
+      case "tsx":
+      case "jsx": return "#38bdf8";
+      case "go": return "#06b6d4";
+      case "rust": return "#f97316";
+      case "java": return "#f59e0b";
+      default: return "#a78bfa";
+    }
+  }
+  switch (kind) {
+    case "function":
+    case "method": return "#22c55e";
+    case "class": return "#38bdf8";
+    case "variable": return "#facc15";
+    default: return "#a78bfa";
+  }
+}
+
+// -------- surrounding widgets --------------------------------------------
 
 function StatsRow({ stats }: { stats: GraphStats | null }) {
   return (
@@ -259,23 +584,67 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
   );
 }
 
-function TabBtn({
-  active,
-  onClick,
-  children,
+function Breadcrumb({
+  trail, focus, onHome, onBack, onJump,
 }: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
+  trail: GraphSubgraphNode[];
+  focus: GraphSubgraphNode;
+  onHome: () => void;
+  onBack: () => void;
+  onJump: (node: GraphSubgraphNode, idx: number) => void;
 }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-b border-chrome-border/60 bg-chrome/40 px-3 py-1.5 font-mono text-[10.5px] text-ink-dim">
+      <button
+        onClick={onHome}
+        className="inline-flex items-center gap-1 rounded border border-chrome-border px-1.5 py-0.5 hover:border-mk-green/50 hover:text-mk-green"
+        title="back to top-N overview"
+      >
+        <Home className="h-3 w-3" /> overview
+      </button>
+      {trail.length > 0 && (
+        <>
+          <ChevronRight className="h-3 w-3 text-ink-faint" />
+          <button
+            onClick={onBack}
+            className="rounded border border-chrome-border px-1.5 py-0.5 hover:text-ink"
+            title="back one step"
+          >
+            ← back
+          </button>
+        </>
+      )}
+      {trail.map((node, i) => (
+        <span key={`${node.id}-${i}`} className="inline-flex items-center gap-1">
+          <ChevronRight className="h-3 w-3 text-ink-faint" />
+          <button
+            onClick={() => onJump(node, i)}
+            className="truncate rounded px-1 py-0.5 text-ink-dim hover:text-mk-pink"
+            title={node.file || undefined}
+          >
+            {node.label}
+          </button>
+        </span>
+      ))}
+      <ChevronRight className="h-3 w-3 text-ink-faint" />
+      <span className="rounded bg-mk-yellow/10 px-1.5 py-0.5 text-mk-yellow">
+        {focus.label}
+      </span>
+    </div>
+  );
+}
+
+function Toggle({
+  active, onClick, children,
+}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-t border border-b-0 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em]",
+        "inline-flex items-center gap-1.5 rounded border px-2 py-1",
         active
-          ? "border-chrome-border bg-bg-soft text-ink"
-          : "border-transparent text-ink-faint hover:text-ink"
+          ? "border-mk-green/50 bg-mk-green/10 text-mk-green"
+          : "border-chrome-border text-ink-dim hover:text-ink",
       )}
     >
       {children}
@@ -283,305 +652,15 @@ function TabBtn({
   );
 }
 
-function SymbolList({
-  symbols,
-  activeId,
-  onPick,
-}: {
-  symbols: GraphSymbolEntry[];
-  activeId?: string;
-  onPick: (s: GraphSymbolEntry) => void;
-}) {
-  if (!symbols.length) {
-    return <Empty label="no symbols match" />;
-  }
-  return (
-    <ul className="divide-y divide-chrome-border/40">
-      {symbols.map((s) => (
-        <li key={s.id}>
-          <button
-            onClick={() => onPick(s)}
-            className={cn(
-              "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left font-mono text-[11.5px] hover:bg-chrome-hover/40",
-              activeId === s.id && "bg-prompt/[0.08]"
-            )}
-          >
-            <span className="flex items-center gap-2">
-              <KindPill kind={s.kind} />
-              <span className="text-mk-pink">{s.name}</span>
-            </span>
-            <span className="text-[10.5px] text-ink-faint">
-              {s.file_path}:{s.start_line}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function FileList({
-  files,
-  activePath,
-  onPick,
-  onFilter,
-}: {
-  files: GraphFileEntry[];
-  activePath?: string;
-  onPick: (f: GraphFileEntry) => void;
-  onFilter: (p: string) => void;
-}) {
-  if (!files.length) return <Empty label="no files match" />;
-  return (
-    <ul className="divide-y divide-chrome-border/40">
-      {files.map((f) => (
-        <li
-          key={f.path}
-          className={cn(
-            "flex items-center gap-2 px-3 py-1.5 font-mono text-[11.5px]",
-            activePath === f.path && "bg-prompt/[0.08]"
-          )}
-        >
-          <button
-            onClick={() => onPick(f)}
-            className="flex-1 truncate text-left text-ink hover:text-mk-blue"
-            title={f.path}
-          >
-            {f.path}
-          </button>
-          {f.language && (
-            <span className="rounded border border-chrome-border/70 px-1 text-[9.5px] text-mk-purple">
-              {f.language}
-            </span>
-          )}
-          <button
-            onClick={() => onFilter(f.path)}
-            className="text-[10px] text-ink-dim hover:text-mk-green"
-            title="filter symbols to this file"
-          >
-            {f.symbol_count} syms
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function SymbolDetailPane({
-  detail,
-  onPick,
-}: {
-  detail: SymbolDetail;
-  onPick: (s: GraphSymbolEntry) => void;
-}) {
-  const { symbol: s, callers, callees, loading } = detail;
-  return (
-    <div className="px-3 py-2 font-mono text-[11.5px]">
-      <div className="flex items-center gap-2">
-        <KindPill kind={s.kind} />
-        <span className="text-mk-pink">{s.name}</span>
-      </div>
-      <p className="mt-0.5 text-[10.5px] text-ink-faint">
-        {s.file_path}:{s.start_line}
-        {s.end_line !== s.start_line && `-${s.end_line}`}
-      </p>
-
-      {loading ? (
-        <p className="mt-3 flex items-center gap-2 text-ink-dim">
-          <Loader2 className="h-3 w-3 animate-spin" /> loading edges…
-        </p>
-      ) : (
-        <>
-          <RelBlock
-            title="callers"
-            icon={<ArrowUpRight className="h-3 w-3 text-mk-yellow" />}
-            items={callers}
-            onPick={onPick}
-            empty="no known callers"
-          />
-          <RelBlock
-            title="callees"
-            icon={<ArrowDownLeft className="h-3 w-3 text-mk-purple" />}
-            items={callees}
-            onPick={onPick}
-            empty="no known callees"
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-function RelBlock({
-  title,
-  icon,
-  items,
-  onPick,
-  empty,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  items: GraphSymbolEntry[];
-  onPick: (s: GraphSymbolEntry) => void;
-  empty: string;
-}) {
-  return (
-    <section className="mt-4">
-      <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-ink-dim">
-        {icon} {title} <span className="text-ink-faint">· {items.length}</span>
-      </p>
-      {items.length === 0 ? (
-        <p className="mt-1 text-[10.5px] text-ink-faint">{empty}</p>
-      ) : (
-        <ul className="mt-1 divide-y divide-chrome-border/30 rounded border border-chrome-border/40">
-          {items.map((it) => (
-            <li key={it.id}>
-              <button
-                onClick={() => onPick(it)}
-                className="flex w-full flex-col items-start gap-0.5 px-2 py-1.5 text-left hover:bg-chrome-hover/40"
-              >
-                <span className="flex items-center gap-2">
-                  <KindPill kind={it.kind} />
-                  <span className="text-mk-pink">{it.name}</span>
-                </span>
-                <span className="text-[10.5px] text-ink-faint">
-                  {it.file_path}:{it.start_line}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function FileDetailPane({
-  detail,
-  onPick,
-}: {
-  detail: FileDetail;
-  onPick: (p: string) => void;
-}) {
-  return (
-    <div className="px-3 py-2 font-mono text-[11.5px]">
-      <p className="flex items-center gap-2 text-ink">
-        <FileCode className="h-3.5 w-3.5 text-mk-blue" /> {detail.path}
-      </p>
-
-      {detail.loading ? (
-        <p className="mt-3 flex items-center gap-2 text-ink-dim">
-          <Loader2 className="h-3 w-3 animate-spin" /> loading edges…
-        </p>
-      ) : (
-        <>
-          <FileRel
-            title="imports (files)"
-            icon={<ArrowDownLeft className="h-3 w-3 text-mk-purple" />}
-            items={detail.importsFiles}
-            onPick={onPick}
-            empty="none"
-          />
-          <FileRel
-            title="imports (modules)"
-            icon={<Network className="h-3 w-3 text-mk-blue" />}
-            items={detail.importsModules}
-            onPick={undefined}
-            empty="none"
-          />
-          <FileRel
-            title="imported by"
-            icon={<ArrowUpRight className="h-3 w-3 text-mk-yellow" />}
-            items={detail.importers}
-            onPick={onPick}
-            empty="no importers"
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-function FileRel({
-  title,
-  icon,
-  items,
-  onPick,
-  empty,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  items: string[];
-  onPick?: (p: string) => void;
-  empty: string;
-}) {
-  return (
-    <section className="mt-4">
-      <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-ink-dim">
-        {icon} {title} <span className="text-ink-faint">· {items.length}</span>
-      </p>
-      {items.length === 0 ? (
-        <p className="mt-1 text-[10.5px] text-ink-faint">{empty}</p>
-      ) : (
-        <ul className="mt-1 divide-y divide-chrome-border/30 rounded border border-chrome-border/40">
-          {items.map((p) => (
-            <li key={p}>
-              {onPick ? (
-                <button
-                  onClick={() => onPick(p)}
-                  className="w-full truncate px-2 py-1 text-left text-ink hover:bg-chrome-hover/40 hover:text-mk-blue"
-                  title={p}
-                >
-                  {p}
-                </button>
-              ) : (
-                <span className="block truncate px-2 py-1 text-ink" title={p}>
-                  {p}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function KindPill({ kind }: { kind: string }) {
-  const cls: Record<string, string> = {
-    function: "text-mk-green border-mk-green/40",
-    method: "text-mk-green border-mk-green/40",
-    class: "text-mk-blue border-mk-blue/40",
-    variable: "text-mk-yellow border-mk-yellow/40",
-  };
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded border px-1 py-[1px] text-[9.5px] uppercase tracking-[0.14em]",
-        cls[kind] || "text-ink-dim border-chrome-border"
-      )}
-    >
-      {kind}
-    </span>
-  );
-}
-
-function Empty({ label }: { label: string }) {
-  return (
-    <p className="px-3 py-4 font-mono text-[11.5px] text-ink-faint">{label}</p>
-  );
-}
-
-function shorten(s: string, n: number): string {
-  return s.length <= n ? s : "…" + s.slice(s.length - (n - 1));
-}
+// unused helpers kept for typing symmetry
+export type { GraphSubgraphNode, GraphSubgraphEdge };
 
 export function KbButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       className="inline-flex items-center gap-1 rounded border border-chrome-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim hover:border-mk-green/50 hover:text-mk-green"
-      title="graph kb browser"
+      title="graph kb visualizer"
     >
       <Database className="h-3 w-3" />
       kb

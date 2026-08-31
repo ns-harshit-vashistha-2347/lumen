@@ -21,6 +21,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
+import { KbBrowser, KbButton } from "@/components/kb-browser";
 import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { ApiError } from "@/lib/api";
 import { chatSessionsApi } from "@/lib/chat-history";
@@ -77,6 +78,7 @@ function CodeChatInner() {
   const [lastTraceId, setLastTraceId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [kbOpen, setKbOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -189,7 +191,13 @@ function CodeChatInner() {
           const tid = meta.trace_id as string | null | undefined;
           const intent = (meta.intent as string) || undefined;
           const graph_hits = (meta.graph_hits as GraphHit[]) || undefined;
-          const sources = (meta.sources as CodeMessage["streamingSources"]) || undefined;
+          const metaSources = (meta.sources as CodeSourceChunk[]) || undefined;
+          const skeleton = metaSources?.map((s) => ({
+            path: s.path,
+            start_line: s.start_line,
+            end_line: s.end_line,
+            symbol_name: s.symbol_name,
+          }));
           if (sid && !sessionId) setSessionId(sid);
           if (tid) setLastTraceId(tid);
           setMessages((m) =>
@@ -200,7 +208,8 @@ function CodeChatInner() {
                     loading: false,
                     intent,
                     graph_hits,
-                    streamingSources: sources,
+                    streamingSources: skeleton,
+                    sources: metaSources,
                   }
                 : msg
             )
@@ -312,6 +321,7 @@ function CodeChatInner() {
               files <span className="text-ink">{repo.indexed_files || repo.total_files}</span>
             </span>
             <SidebarToggle onClick={() => setSidebarOpen(true)} />
+            <KbButton onClick={() => setKbOpen(true)} />
             <GraphButton onClick={() => setGraphOpen(true)} />
           </div>
         </div>
@@ -334,6 +344,13 @@ function CodeChatInner() {
         onClose={() => setGraphOpen(false)}
         graphName="code_query"
         traceId={lastTraceId}
+        title={`${repo.owner}/${repo.name}`}
+      />
+
+      <KbBrowser
+        open={kbOpen}
+        onClose={() => setKbOpen(false)}
+        repoId={repoId}
         title={`${repo.owner}/${repo.name}`}
       />
 

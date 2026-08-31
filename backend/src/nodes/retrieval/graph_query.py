@@ -109,6 +109,62 @@ def imports_from(repo_id: str, file_path: str, limit: int = 50) -> dict:
     return {"files": [r[0] for r in files], "modules": [r[0] for r in mods]}
 
 
+def graph_stats(repo_id: str) -> dict:
+    if not graph_available(repo_id):
+        return {"available": False, "files": 0, "symbols": 0, "calls": 0, "imports": 0}
+    with kuzu_connection(repo_id, create=False) as conn:
+        def _count(q: str) -> int:
+            rows = _rows(conn.execute(q))
+            return int(rows[0][0]) if rows else 0
+        files = _count("MATCH (f:File) RETURN count(f)")
+        symbols = _count("MATCH (s:Symbol) WHERE s.kind <> 'unresolved' RETURN count(s)")
+        calls = _count("MATCH ()-[r:CALLS]->() RETURN count(r)")
+        imports = _count("MATCH ()-[r:IMPORTS]->() RETURN count(r)")
+    return {"available": True, "files": files, "symbols": symbols, "calls": calls, "imports": imports}
+
+
+def list_files(repo_id: str, query: str = "", limit: int = 100, offset: int = 0) -> list[dict]:
+    if not graph_available(repo_id):
+        return []
+    q = (
+        "MATCH (f:File) "
+        "WHERE ($q = '' OR lower(f.path) CONTAINS lower($q)) "
+        "OPTIONAL MATCH (f)-[:DEFINES]->(s:Symbol) "
+        "WITH f, count(s) AS n "
+        "RETURN f.path, f.language, n "
+        "ORDER BY f.path SKIP $off LIMIT $lim"
+    )
+    with kuzu_connection(repo_id, create=False) as conn:
+        rows = _rows(conn.execute(q, {"q": query, "lim": limit, "off": offset}))
+    return [{"path": r[0], "language": r[1], "symbol_count": int(r[2])} for r in rows]
+
+
+def list_symbols(
+    repo_id: str,
+    query: str = "",
+    file: str = "",
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    if not graph_available(repo_id):
+        return []
+    q = (
+        "MATCH (s:Symbol) "
+        "WHERE s.kind <> 'unresolved' "
+        "AND ($q = '' OR lower(s.name) CONTAINS lower($q)) "
+        "AND ($f = '' OR s.file_path = $f) "
+        "RETURN s.id, s.name, s.kind, s.file_path, s.start_line, s.end_line "
+        "ORDER BY s.name SKIP $off LIMIT $lim"
+    )
+    with kuzu_connection(repo_id, create=False) as conn:
+        rows = _rows(conn.execute(q, {"q": query, "f": file, "lim": limit, "off": offset}))
+    return [
+        {"id": r[0], "name": r[1], "kind": r[2], "file_path": r[3],
+         "start_line": r[4], "end_line": r[5]}
+        for r in rows
+    ]
+
+
 def graph_query_node(state: dict) -> dict:
     """LangGraph node: dispatch based on state['code_intent'] populated by
     the classifier. Returns state['graph_hits'] — list of {path, snippet_hint}

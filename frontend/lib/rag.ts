@@ -206,4 +206,43 @@ export const codeQueryApi = {
     api.get<Array<Record<string, unknown>>>(
       `/code-query/${repo_id}/callees?name=${encodeURIComponent(name)}`
     ),
+  imports: (repo_id: string, file: string, direction: "from" | "to" = "from") =>
+    api.get<
+      { files: string[]; modules: string[] } | { importers: string[] }
+    >(
+      `/code-query/${repo_id}/imports?file=${encodeURIComponent(file)}&direction=${direction}`
+    ),
+  graphStats: (repo_id: string) =>
+    api.get<GraphStats>(`/code-query/${repo_id}/graph/stats`),
+  graphFiles: (repo_id: string, q = "", limit = 200, offset = 0) =>
+    api.get<GraphFileEntry[]>(
+      `/code-query/${repo_id}/graph/files?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`
+    ),
+  graphSymbols: (repo_id: string, q = "", file = "", limit = 200, offset = 0) =>
+    api.get<GraphSymbolEntry[]>(
+      `/code-query/${repo_id}/graph/symbols?q=${encodeURIComponent(q)}&file=${encodeURIComponent(file)}&limit=${limit}&offset=${offset}`
+    ),
 };
+
+export interface GraphStats {
+  available: boolean;
+  files: number;
+  symbols: number;
+  calls: number;
+  imports: number;
+}
+
+export interface GraphFileEntry {
+  path: string;
+  language: string | null;
+  symbol_count: number;
+}
+
+export interface GraphSymbolEntry {
+  id: string;
+  name: string;
+  kind: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+}

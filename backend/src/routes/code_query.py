@@ -24,7 +24,8 @@ from src.nodes.retrieval.generation import (
     SYSTEM_PROMPT, _build_context, _history_messages,
 )
 from src.nodes.retrieval.graph_query import (
-    callers_of, callees_of, find_symbols, importers_of, imports_from,
+    callers_of, callees_of, find_symbols, graph_stats, importers_of,
+    imports_from, list_files, list_symbols,
 )
 from src.schemas.code_query import (
     CodeQueryRequest, CodeQueryResponse, CodeSourceChunk, GraphHit,
@@ -171,6 +172,43 @@ async def lookup_imports(
     return imports_from(str(repo_id), file)
 
 
+@code_query_router.get("/{repo_id}/graph/stats")
+async def graph_kb_stats(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _load_repo(db, current_user, repo_id)
+    return graph_stats(str(repo_id))
+
+
+@code_query_router.get("/{repo_id}/graph/files")
+async def graph_kb_files(
+    repo_id: uuid.UUID,
+    q: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _load_repo(db, current_user, repo_id)
+    return list_files(str(repo_id), query=q, limit=limit, offset=offset)
+
+
+@code_query_router.get("/{repo_id}/graph/symbols")
+async def graph_kb_symbols(
+    repo_id: uuid.UUID,
+    q: str = "",
+    file: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _load_repo(db, current_user, repo_id)
+    return list_symbols(str(repo_id), query=q, file=file, limit=limit, offset=offset)
+
+
 @code_query_router.post("/stream")
 async def stream_code_query(
     payload: CodeQueryRequest,
@@ -228,7 +266,10 @@ async def stream_code_query(
                 {"path": c.metadata.get("path"),
                  "start_line": c.metadata.get("start_line"),
                  "end_line": c.metadata.get("end_line"),
-                 "symbol_name": c.metadata.get("symbol_name")}
+                 "symbol_name": c.metadata.get("symbol_name"),
+                 "symbol_kind": c.metadata.get("symbol_kind"),
+                 "score": float(c.metadata.get("score", 0.0)),
+                 "content": c.page_content}
                 for c in chunks
             ],
         }
@@ -248,7 +289,12 @@ async def stream_code_query(
                     db, session,
                     user_content=payload.query,
                     assistant_content="".join(collected),
-                    payload={"streamed": True, "intent": intent},
+                    payload={
+                        "streamed": True,
+                        "intent": intent,
+                        "graph_hits": graph_hits,
+                        "sources": header["sources"],
+                    },
                     trace_id=trace_id,
                 )
             except Exception as exc:

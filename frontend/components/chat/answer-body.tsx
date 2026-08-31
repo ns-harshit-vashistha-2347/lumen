@@ -56,10 +56,7 @@ function buildComponents(sources: SourceChunk[] | undefined): Components {
       </td>
     ),
     pre: ({ children }) => <>{children}</>,
-    code: ({ className, children, ...rest }: {
-      className?: string;
-      children?: ReactNode;
-    } & Record<string, unknown>) => {
+    code: ({ className, children, ...rest }) => {
       // react-markdown v9 no longer passes `inline`; use language-* className
       // + string children as the fence signal instead.
       const inline =

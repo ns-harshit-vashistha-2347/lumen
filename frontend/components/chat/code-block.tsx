@@ -9,8 +9,7 @@ function childrenToString(children: ReactNode): string {
   if (typeof children === "string") return children;
   if (Array.isArray(children)) return children.map(childrenToString).join("");
   if (children && typeof children === "object" && "props" in children) {
-    // @ts-expect-error react markdown node
-    return childrenToString(children.props.children);
+    return childrenToString((children.props as { children?: ReactNode }).children);
   }
   return "";
 }

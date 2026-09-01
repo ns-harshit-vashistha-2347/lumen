@@ -16,7 +16,15 @@ class GroqProvider(LLMProvider):
         return bool(settings.GROQ_API_KEY)
 
 
-    def _model_for_tier(self, tier: TaskTier) -> str:
+    def _model_for_tier(self, tier: TaskTier, pipeline: str = "doc") -> str:
+        if pipeline == "code":
+            code = {
+                "small": settings.GROQ_MODEL_CODE_SMALL,
+                "medium": settings.GROQ_MODEL_CODE_MEDIUM,
+                "large": settings.GROQ_MODEL_CODE_LARGE,
+            }[tier]
+            if code:
+                return code
         return {
             "small": settings.GROQ_MODEL_SMALL,
             "medium": settings.GROQ_MODEL_MEDIUM,
@@ -24,8 +32,8 @@ class GroqProvider(LLMProvider):
         }[tier]
 
 
-    def build_chat_model(self, tier: TaskTier, temperature: float) -> Any:
-        return _cached_groq(self._model_for_tier(tier), temperature)
+    def build_chat_model(self, tier: TaskTier, temperature: float, pipeline: str = "doc") -> Any:
+        return _cached_groq(self._model_for_tier(tier, pipeline), temperature)
 
 
     def is_rate_limit_error(self, exc: BaseException) -> tuple[bool, float | None]:
@@ -43,6 +51,8 @@ def _cached_groq(model: str, temperature: float) -> ChatGroq:
         api_key=settings.GROQ_API_KEY,
         model=model,
         temperature=temperature,
+        max_retries=0,
+        timeout=30,
     )
 
 

@@ -34,21 +34,28 @@ def _pick_device() -> str:
 
 
 @lru_cache
-def get_reranker() -> CrossEncoder:
+def _reranker_for(model_name: str) -> CrossEncoder:
     device = _pick_device()
-    logger.info(f"Loading reranker model: {settings.RERANK_MODEL} on device={device}")
+    logger.info(f"Loading reranker model: {model_name} on device={device}")
     t0 = time.time()
     model = CrossEncoder(
-        settings.RERANK_MODEL,
+        model_name,
         max_length=settings.RERANK_MAX_LENGTH,
         device=device,
+        trust_remote_code=True,
     )
     logger.info(f"Reranker model loaded in {time.time() - t0:.1f}s (device={device})")
     return model
 
 
-def _rerank_sync(query: str, chunks: list[RetrievedChunk], top_n: int) -> list[RetrievedChunk]:
-    model = get_reranker()
+def get_reranker(pipeline: str = "doc") -> CrossEncoder:
+    if pipeline == "code":
+        return _reranker_for(settings.RERANK_MODEL_CODE or settings.RERANK_MODEL)
+    return _reranker_for(settings.RERANK_MODEL)
+
+
+def _rerank_sync(query: str, chunks: list[RetrievedChunk], top_n: int, pipeline: str = "doc") -> list[RetrievedChunk]:
+    model = get_reranker(pipeline=pipeline)
     pairs = [(query, chunk.content) for chunk in chunks]
     t0 = time.time()
     # Serialize predict() calls: the model is not thread-safe and running
@@ -78,10 +85,10 @@ def _rerank_sync(query: str, chunks: list[RetrievedChunk], top_n: int) -> list[R
     ]
 
 
-def rerank(query: str, chunks: list[RetrievedChunk], top_n: int) -> list[RetrievedChunk]:
+def rerank(query: str, chunks: list[RetrievedChunk], top_n: int, pipeline: str = "doc") -> list[RetrievedChunk]:
     if not chunks:
         return []
-    return _rerank_sync(query, chunks, top_n)
+    return _rerank_sync(query, chunks, top_n, pipeline)
 
 
 async def rerank_node(state: dict) -> dict:
@@ -92,9 +99,10 @@ async def rerank_node(state: dict) -> dict:
     query = state.get("primary_query") or state["query"]
     fused_results = state.get("fused_results", [])
     top_n = state.get("top_k", settings.RERANK_TOP_N)
+    pipeline = state.get("pipeline", "doc")
 
     logger.info(
-        f"[rerank_node] reranking {len(fused_results)} candidates -> top_n={top_n}"
+        f"[rerank_node] reranking {len(fused_results)} candidates -> top_n={top_n} pipeline={pipeline}"
     )
 
     if not fused_results:
@@ -102,6 +110,6 @@ async def rerank_node(state: dict) -> dict:
 
     # Run the blocking CPU work in a threadpool so the event loop stays
     # free to service other users' requests during rerank.
-    reranked = await asyncio.to_thread(_rerank_sync, query, fused_results, top_n)
+    reranked = await asyncio.to_thread(_rerank_sync, query, fused_results, top_n, pipeline)
 
     return {"reranked_results": reranked}

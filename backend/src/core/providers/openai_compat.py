@@ -17,12 +17,12 @@ class OpenAICompatProvider(LLMProvider):
     base_url: str = ""
     api_key: str = ""
 
-    def build_chat_model(self, tier: TaskTier, temperature: float) -> Any:
+    def build_chat_model(self, tier: TaskTier, temperature: float, pipeline: str = "doc") -> Any:
         return _cached_openai(
-            self.name, self._model_for_tier(tier), temperature, self.base_url, self.api_key,
+            self.name, self._model_for_tier(tier, pipeline), temperature, self.base_url, self.api_key,
         )
 
-    def _model_for_tier(self, tier: TaskTier) -> str:
+    def _model_for_tier(self, tier: TaskTier, pipeline: str = "doc") -> str:
         raise NotImplementedError
 
     def is_rate_limit_error(self, exc: BaseException) -> tuple[bool, float | None]:
@@ -53,11 +53,16 @@ class OpenAICompatProvider(LLMProvider):
 def _cached_openai(name: str, model: str, temperature: float, base_url: str, api_key: str):
     # Imported lazily so envs that don't use these providers don't pay the cost.
     from langchain_openai import ChatOpenAI
+    # max_retries=0: don't retry inside the client — the router fails over to
+    # the next provider on rate-limit / 4xx / 5xx, and internal retries just
+    # delay that. request_timeout keeps a stuck provider from stalling stream.
     return ChatOpenAI(
         model=model,
         temperature=temperature,
         api_key=api_key,
         base_url=base_url,
+        max_retries=0,
+        timeout=30,
     )
 
 

@@ -283,7 +283,7 @@ async def stream_code_query(
     intent = partial.get("code_intent", "general")
     graph_hits = partial.get("graph_hits", [])
 
-    llm = get_llm(task="generate_complex", temperature=0.2)
+    llm = get_llm(task="code_generate", temperature=0.2, pipeline="code")
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_messages(history))
     messages.append(HumanMessage(content=f"Context:\n\n{context}\n\nQuestion: {payload.query}"))

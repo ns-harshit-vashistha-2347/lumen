@@ -64,3 +64,43 @@ def set_cached_query(query: str, top_k: int, user_id: str, payload: dict, ttl: i
         )
     except (redis.RedisError, TypeError, ValueError) as exc:
         logger.warning(f"query cache write failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Query-embedding cache
+#
+# Embedding the SAME text twice on CPU costs ~50-200ms per hit. In this app a
+# single request often embeds the same string multiple times: the primary
+# query + N rewrites often overlap, and users retry / paginate the same
+# question. Cache by (model, text) so repeats become a cheap Redis GET.
+# ---------------------------------------------------------------------------
+
+def _embedding_key(model_name: str, text: str) -> str:
+    digest = hashlib.sha1(f"{model_name}\x00{text}".encode("utf-8")).hexdigest()
+    return f"emb:q:{digest}"
+
+
+def get_cached_embedding(model_name: str, text: str) -> list[float] | None:
+    try:
+        raw = get_redis_client().get(_embedding_key(model_name, text))
+    except redis.RedisError as exc:
+        logger.warning(f"embedding cache read failed: {exc}")
+        return None
+    if not raw:
+        return None
+    try:
+        vec = json.loads(raw)
+        if isinstance(vec, list):
+            return vec
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(f"embedding cache decode failed: {exc}")
+    return None
+
+
+def set_cached_embedding(model_name: str, text: str, vector: list[float], ttl: int = 86400) -> None:
+    try:
+        get_redis_client().set(
+            _embedding_key(model_name, text), json.dumps(vector), ex=ttl
+        )
+    except (redis.RedisError, TypeError, ValueError) as exc:
+        logger.warning(f"embedding cache write failed: {exc}")

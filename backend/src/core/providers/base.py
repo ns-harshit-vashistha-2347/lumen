@@ -13,6 +13,7 @@ class RateLimitedError(Exception):
 
 
 TaskTier = str
+Pipeline = str  # "doc" or "code"
 
 TASK_TO_TIER: dict[str, TaskTier] = {
     "classify": "small",
@@ -23,6 +24,25 @@ TASK_TO_TIER: dict[str, TaskTier] = {
     "generate_complex": "large",
     "default": "medium",
 }
+
+# Tasks that should ALWAYS run against the code pipeline regardless of
+# the caller-supplied pipeline arg. Keeps callers from forgetting.
+CODE_TASKS: frozenset[str] = frozenset({
+    "code_classify",
+    "code_generate",
+    "code_generate_simple",
+    "code_verify",
+    "code_rewrite",
+})
+
+# Extend task→tier for code-only tasks.
+TASK_TO_TIER.update({
+    "code_classify": "small",
+    "code_rewrite": "small",
+    "code_verify": "small",
+    "code_generate_simple": "medium",
+    "code_generate": "large",
+})
 
 @dataclass
 class ProviderHealth:
@@ -56,7 +76,7 @@ class LLMProvider(ABC):
         ...
 
     @abstractmethod
-    def build_chat_model(self, tier: TaskTier, temperature: float) -> Any:
+    def build_chat_model(self, tier: TaskTier, temperature: float, pipeline: Pipeline = "doc") -> Any:
         """Return a LangChain chat model instance (has .invoke/.ainvoke/.astream)."""
         ...
 

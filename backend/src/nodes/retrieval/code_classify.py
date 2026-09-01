@@ -26,7 +26,7 @@ Respond with exactly one word: symbol, dependency, behavior, or general."""
 
 def code_classify_node(state: dict) -> dict:
     query = state.get("primary_query") or state["query"]
-    llm = get_llm(task="classify", temperature=0.0)
+    llm = get_llm(task="code_classify", temperature=0.0, pipeline="code")
     try:
         resp = llm.invoke([
             SystemMessage(content=CODE_CLASSIFY_PROMPT),

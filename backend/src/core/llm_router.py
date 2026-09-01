@@ -7,7 +7,7 @@ from src.core.logging import get_logger
 from src.core.providers import (
     CerebrasProvider, GeminiProvider, GroqProvider, LLMProvider, OpenRouterProvider,
 )
-from src.core.providers.base import TASK_TO_TIER, RateLimitedError, TaskTier
+from src.core.providers.base import CODE_TASKS, TASK_TO_TIER, RateLimitedError, TaskTier
 
 logger = get_logger(__name__)
 
@@ -39,11 +39,12 @@ class RoutedChatModel:
     provider is cool, re-raises the last error.
     """
 
-    def __init__(self, router: "LLMRouter", tier: TaskTier, temperature: float, task: str):
+    def __init__(self, router: "LLMRouter", tier: TaskTier, temperature: float, task: str, pipeline: str = "doc"):
         self._router = router
         self._tier = tier
         self._temperature = temperature
         self._task = task
+        self._pipeline = pipeline
 
     def _providers(self) -> list[LLMProvider]:
         return self._router.providers_for(self._tier)
@@ -52,7 +53,7 @@ class RoutedChatModel:
     def invoke(self, messages, **kwargs) -> Any:
         last_exc: BaseException | None = None
         for provider in self._providers():
-            model = provider.build_chat_model(self._tier, self._temperature)
+            model = provider.build_chat_model(self._tier, self._temperature, self._pipeline)
             try:
                 logger.debug(f"[llm_router] task={self._task} tier={self._tier} → {provider.name}")
                 result = model.invoke(messages, **kwargs)
@@ -77,7 +78,7 @@ class RoutedChatModel:
     async def ainvoke(self, messages, **kwargs) -> Any:
         last_exc: BaseException | None = None
         for provider in self._providers():
-            model = provider.build_chat_model(self._tier, self._temperature)
+            model = provider.build_chat_model(self._tier, self._temperature, self._pipeline)
             try:
                 logger.debug(f"[llm_router] (async) task={self._task} tier={self._tier} → {provider.name}")
                 result = await model.ainvoke(messages, **kwargs)
@@ -104,7 +105,7 @@ class RoutedChatModel:
         can't safely restart on a different provider mid-answer."""
         last_exc: BaseException | None = None
         for provider in self._providers():
-            model = provider.build_chat_model(self._tier, self._temperature)
+            model = provider.build_chat_model(self._tier, self._temperature, self._pipeline)
             try:
                 stream = model.astream(messages, **kwargs)
                 first = await stream.__anext__()
@@ -172,9 +173,12 @@ class LLMRouter:
         healthy = [p for p in configured if p.health.is_available()]
         return healthy or configured
 
-    def get_chat(self, task: str = "default", temperature: float = 0.2) -> RoutedChatModel:
+    def get_chat(self, task: str = "default", temperature: float = 0.2, pipeline: str = "doc") -> RoutedChatModel:
         tier = TASK_TO_TIER.get(task, "medium")
-        return RoutedChatModel(self, tier=tier, temperature=temperature, task=task)
+        # Force pipeline='code' for known-code tasks even if the caller forgot.
+        if task in CODE_TASKS:
+            pipeline = "code"
+        return RoutedChatModel(self, tier=tier, temperature=temperature, task=task, pipeline=pipeline)
 
     def health_snapshot(self) -> dict:
         """For a future /status/providers endpoint."""

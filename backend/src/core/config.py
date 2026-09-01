@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     GROQ_MODEL_SMALL: str = "openai/gpt-oss-20b"
     GROQ_MODEL_MEDIUM: str = "openai/gpt-oss-20b"
     GROQ_MODEL_LARGE: str = "openai/gpt-oss-20b"
+    # Code-tuned overrides. Empty string -> fall back to the doc-tier model above.
+    GROQ_MODEL_CODE_SMALL: str = ""
+    GROQ_MODEL_CODE_MEDIUM: str = "qwen/qwen3-32b"
+    GROQ_MODEL_CODE_LARGE: str = "qwen/qwen3-32b"
 
     GEMINI_API_KEY: str = ""
     # Defaults chosen for broad account compatibility.
@@ -146,6 +150,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL_SMALL: str = "gemini-2.0-flash-lite"
     GEMINI_MODEL_MEDIUM: str = "gemini-2.0-flash"
     GEMINI_MODEL_LARGE: str = "gemini-2.0-flash"
+    GEMINI_MODEL_CODE_SMALL: str = ""
+    GEMINI_MODEL_CODE_MEDIUM: str = ""
+    GEMINI_MODEL_CODE_LARGE: str = ""
 
     # OpenRouter — single key, dozens of models; many free-tier.
     OPENROUTER_API_KEY: str = ""
@@ -153,6 +160,9 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL_SMALL: str = "meta-llama/llama-3.2-3b-instruct:free"
     OPENROUTER_MODEL_MEDIUM: str = "meta-llama/llama-3.3-70b-instruct:free"
     OPENROUTER_MODEL_LARGE: str = "deepseek/deepseek-chat-v3.1:free"
+    OPENROUTER_MODEL_CODE_SMALL: str = "qwen/qwen-2.5-coder-7b-instruct:free"
+    OPENROUTER_MODEL_CODE_MEDIUM: str = "qwen/qwen-2.5-coder-32b-instruct:free"
+    OPENROUTER_MODEL_CODE_LARGE: str = "deepseek/deepseek-coder"
 
     # Cerebras — very fast Llama on custom silicon.
     CEREBRAS_API_KEY: str = ""
@@ -160,6 +170,9 @@ class Settings(BaseSettings):
     CEREBRAS_MODEL_SMALL: str = "llama3.1-8b"
     CEREBRAS_MODEL_MEDIUM: str = "llama-3.3-70b"
     CEREBRAS_MODEL_LARGE: str = "llama-3.3-70b"
+    CEREBRAS_MODEL_CODE_SMALL: str = ""
+    CEREBRAS_MODEL_CODE_MEDIUM: str = ""
+    CEREBRAS_MODEL_CODE_LARGE: str = ""
 
     # Provider policy per tier — comma-separated names in preferred order.
     # Set in .env to change failover ordering without touching code.
@@ -171,8 +184,16 @@ class Settings(BaseSettings):
     QUERY_CLASSIFIER_ENABLED: bool = True
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
+    # Code-tuned embedder used by the code-RAG pipeline. Different from the
+    # doc embedder above; switching this value invalidates any per-repo Chroma
+    # collection built against the previous model (dimensions may differ).
+    # Requires re-ingesting affected repositories.
+    EMBEDDING_MODEL_CODE: str = "jinaai/jina-embeddings-v2-base-code"
     # "" = auto-detect (cuda > mps > cpu). Override with "cuda" | "mps" | "cpu".
     EMBEDDING_DEVICE: str = ""
+    # Batch size for embedding calls (doc + code). Higher = faster on GPU,
+    # more RAM on CPU. 32-64 is a good CPU default.
+    EMBEDDING_BATCH_SIZE: int = 32
 
     UPLOAD_DIR: str = "/data/uploads"
 
@@ -185,6 +206,8 @@ class Settings(BaseSettings):
 
     RERANK_ENABLED: bool = True
     RERANK_MODEL: str = "BAAI/bge-reranker-base"
+    # Code-tuned cross-encoder for the code-RAG pipeline. Empty = reuse RERANK_MODEL.
+    RERANK_MODEL_CODE: str = "jinaai/jina-reranker-v1-turbo-en"
     RERANK_CANDIDATE_POOL: int = 8
     RERANK_TOP_N: int = 5
     RERANK_BATCH_SIZE: int = 32

@@ -28,7 +28,31 @@ def code_store_node(state: dict) -> dict:
     if not chunks:
         return {"stored_chunk_count": 0}
 
-    collection = get_collections(_collection_name(repo_id))
+    from src.core.vectorstore import get_chroma_client
+    coll_name = _collection_name(repo_id)
+    collection = get_collections(coll_name)
+
+    # If the collection was previously populated with a different-dimension
+    # embedder (e.g. user switched EMBEDDING_MODEL_CODE), drop and recreate
+    # so Chroma doesn't reject the upsert with a shape mismatch.
+    new_dim = len(embeddings[0]) if embeddings else 0
+    try:
+        peek = collection.peek(limit=1)
+        existing = (peek.get("embeddings") or [None])[0]
+        if existing is not None and len(existing) != new_dim:
+            logger.warning(
+                f"[code_store] embedding dim changed for {coll_name} "
+                f"({len(existing)} -> {new_dim}); recreating collection"
+            )
+            get_chroma_client().delete_collection(coll_name)
+            # Bust the lru_cache in vectorstore so we don't hand out the
+            # deleted collection object.
+            from src.core.vectorstore import _get_collection_cached
+            _get_collection_cached.cache_clear()
+            collection = get_collections(coll_name)
+    except Exception as exc:
+        logger.warning(f"[code_store] dim-check skipped for {coll_name}: {exc}")
+
     # Full ingest re-generates chunk ids each run; wipe prior chunks
     # so refresh does not accumulate duplicates alongside the new set.
     try:

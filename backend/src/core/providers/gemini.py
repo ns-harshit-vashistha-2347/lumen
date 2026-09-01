@@ -13,16 +13,24 @@ class GeminiProvider(LLMProvider):
     def is_configured(self) -> bool:
         return bool(settings.GEMINI_API_KEY)
 
-    def _model_for_tier(self, tier: TaskTier) -> str:
+    def _model_for_tier(self, tier: TaskTier, pipeline: str = "doc") -> str:
+        if pipeline == "code":
+            code = {
+                "small": settings.GEMINI_MODEL_CODE_SMALL,
+                "medium": settings.GEMINI_MODEL_CODE_MEDIUM,
+                "large": settings.GEMINI_MODEL_CODE_LARGE,
+            }[tier]
+            if code:
+                return code
         return {
             "small": settings.GEMINI_MODEL_SMALL,
             "medium": settings.GEMINI_MODEL_MEDIUM,
             "large": settings.GEMINI_MODEL_LARGE,
         }[tier]
 
-    def build_chat_model(self, tier: TaskTier, temperature: float) -> Any:
+    def build_chat_model(self, tier: TaskTier, temperature: float, pipeline: str = "doc") -> Any:
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return _cached_gemini(self._model_for_tier(tier), temperature)
+        return _cached_gemini(self._model_for_tier(tier, pipeline), temperature)
 
     def is_rate_limit_error(self, exc: BaseException) -> tuple[bool, float | None]:
         """Signal 'unhealthy → fail over' for rate limits AND for
@@ -61,10 +69,14 @@ class GeminiProvider(LLMProvider):
 @lru_cache
 def _cached_gemini(model: str, temperature: float):
     from langchain_google_genai import ChatGoogleGenerativeAI
+    # max_retries=0: Google's SDK otherwise retries 429s 4x with exponential
+    # backoff (~30s wasted) before our router even sees the failure and can
+    # fail over to the next provider.
     return ChatGoogleGenerativeAI(
         model=model,
         temperature=temperature,
         google_api_key=settings.GEMINI_API_KEY,
+        max_retries=0,
     )
 
 

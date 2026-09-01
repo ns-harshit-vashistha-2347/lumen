@@ -12,8 +12,8 @@ def code_embed_node(state: dict) -> dict:
     chunks = state["chunks"]
     if not chunks:
         return {"embeddings": []}
-    embedder = get_embedder()
+    embedder = get_embedder(pipeline="code")
     texts = [c.content for c in chunks]
     embeddings = embedder.embed_documents(texts)
-    logger.info(f"[code_embed] embedded {len(chunks)} chunks")
+    logger.info(f"[code_embed] embedded {len(chunks)} chunks with {embedder.model_name}")
     return {"embeddings": embeddings}

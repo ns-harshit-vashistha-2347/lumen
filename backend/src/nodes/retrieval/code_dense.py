@@ -43,7 +43,7 @@ def code_dense_node(state: dict) -> dict:
     queries = state.get("queries") or [state.get("primary_query") or state["query"]]
     top_k = state.get("top_k", settings.CODE_QUERY_TOP_K)
 
-    embedder = get_embedder()
+    embedder = get_embedder(pipeline="code")
     coll = _collection_for(repo_id)
     focus_files: list[str] = state.get("focus_files") or []
 

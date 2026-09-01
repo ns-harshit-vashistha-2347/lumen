@@ -22,6 +22,19 @@ SYMBOL_NODE_TYPES: dict[str, set[str]] = {
     "rust":       {"function_item", "impl_item", "struct_item", "enum_item", "trait_item"},
 }
 
+# Node types that act as *containers* (classes, impl blocks, interfaces): if we
+# already emit their children as separate symbol chunks, we skip re-emitting
+# the whole container body — that would duplicate every method into two chunks
+# and dilute the embedding signal.
+CONTAINER_NODE_TYPES: dict[str, set[str]] = {
+    "python":     {"class_definition"},
+    "javascript": {"class_declaration"},
+    "typescript": {"class_declaration", "interface_declaration", "abstract_class_declaration"},
+    "tsx":        {"class_declaration", "interface_declaration"},
+    "java":       {"class_declaration", "interface_declaration"},
+    "rust":       {"impl_item", "trait_item"},
+}
+
 
 TS_LANG_KEY = {
     "python": "python", "javascript": "javascript",
@@ -33,14 +46,20 @@ TS_LANG_KEY = {
 FALLBACK_LINES = 80
 FALLBACK_OVERLAP = 10
 
+# Cap on lines per chunk. Symbols larger than this are windowed so a single
+# 2000-line class doesn't produce one embedding that averages away all detail.
+MAX_SYMBOL_LINES = 120
+SYMBOL_WINDOW_OVERLAP = 15
+
+
 @dataclass
 class CodeChunk:
     content: str
     rel_path: str
     language: str
-    symbol_name: Optional[str]   
-    symbol_kind: Optional[str]    
-    start_line: int              
+    symbol_name: Optional[str]
+    symbol_kind: Optional[str]
+    start_line: int
     end_line: int
 
 
@@ -53,6 +72,48 @@ def _read_text(path) -> Optional[str]:
         return None
 
 
+def _header(rel_path: str, language: str, kind: Optional[str], name: Optional[str],
+            start: int, end: int) -> str:
+    """A short, embedder-visible preamble. Puts the identifiers a code-tuned
+    embedder cares about (file path, symbol name, kind) at the top of every
+    chunk so dense retrieval matches on them."""
+    label = " ".join(x for x in (kind, name) if x) or "chunk"
+    return f"# {rel_path}:{start}-{end}  [{language}]  {label}\n"
+
+
+def _emit(content: str, rel_path: str, language: str, kind: Optional[str],
+          name: Optional[str], start: int, end: int) -> Iterator[CodeChunk]:
+    """Emit one chunk, splitting oversized bodies into windows that share the
+    same header so each window still carries symbol context."""
+    lines = content.splitlines()
+    if not lines:
+        return
+    if len(lines) <= MAX_SYMBOL_LINES:
+        yield CodeChunk(
+            content=_header(rel_path, language, kind, name, start, end) + content,
+            rel_path=rel_path, language=language,
+            symbol_name=name, symbol_kind=kind,
+            start_line=start, end_line=end,
+        )
+        return
+
+    step = max(1, MAX_SYMBOL_LINES - SYMBOL_WINDOW_OVERLAP)
+    for offset in range(0, len(lines), step):
+        window = lines[offset:offset + MAX_SYMBOL_LINES]
+        if not window:
+            break
+        w_start = start + offset
+        w_end = w_start + len(window) - 1
+        yield CodeChunk(
+            content=_header(rel_path, language, kind, name, w_start, w_end) + "\n".join(window),
+            rel_path=rel_path, language=language,
+            symbol_name=name, symbol_kind=kind,
+            start_line=w_start, end_line=w_end,
+        )
+        if offset + MAX_SYMBOL_LINES >= len(lines):
+            break
+
+
 def _fallback_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeChunk]:
     lines = text.splitlines()
     n = len(lines)
@@ -61,11 +122,11 @@ def _fallback_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeCh
     step = max(1, FALLBACK_LINES - FALLBACK_OVERLAP)
     for start in range(0, n, step):
         end = min(n, start + FALLBACK_LINES)
-        yield CodeChunk(
-            content="\n".join(lines[start:end]),
+        yield from _emit(
+            "\n".join(lines[start:end]),
             rel_path=rel_path, language=language,
-            symbol_name=None, symbol_kind=None,
-            start_line=start + 1, end_line=end,
+            kind=None, name=None,
+            start=start + 1, end=end,
         )
         if end == n:
             break
@@ -98,6 +159,27 @@ def _node_name(node, source: bytes) -> Optional[str]:
     return None
 
 
+def _container_summary(node, source: bytes, language: str) -> Optional[str]:
+    """For a class/interface/impl block, return just the signature line +
+    docstring (if any) — the body's methods are emitted as their own chunks."""
+    try:
+        first = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace").splitlines()
+    except Exception:
+        return None
+    # Signature line: everything up to the first `:` (Python), `{` (JS/TS/Java/Rust), or newline.
+    if not first:
+        return None
+    sig = first[0]
+    # Optional python-style docstring: peek first non-empty following line
+    doc = ""
+    for line in first[1:8]:
+        stripped = line.strip()
+        if stripped and (stripped.startswith('"""') or stripped.startswith("'''") or stripped.startswith("///")):
+            doc = "\n" + stripped
+            break
+    return sig + doc
+
+
 def _ast_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeChunk]:
     parser = _get_parser(language)
     if parser is None:
@@ -105,6 +187,7 @@ def _ast_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeChunk]:
         return
 
     symbol_types = SYMBOL_NODE_TYPES.get(language, set())
+    container_types = CONTAINER_NODE_TYPES.get(language, set())
     if not symbol_types:
         yield from _fallback_chunks(text, rel_path, language)
         return
@@ -113,22 +196,37 @@ def _ast_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeChunk]:
     tree = parser.parse(source)
 
     emitted_any = False
+    # Two-pass DFS: first identify which container nodes have symbol children,
+    # so we can emit a short "signature-only" chunk for those instead of the
+    # whole body (its methods will be emitted separately). Iterative DFS.
     stack = [tree.root_node]
     while stack:
         node = stack.pop()
         if node.type in symbol_types:
-            content = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-            if content.strip():
-                yield CodeChunk(
-                    content=content,
-                    rel_path=rel_path,
-                    language=language,
-                    symbol_name=_node_name(node, source),
-                    symbol_kind=node.type,
-                    start_line=node.start_point[0] + 1,
-                    end_line=node.end_point[0] + 1,
-                )
-                emitted_any = True
+            name = _node_name(node, source)
+            start = node.start_point[0] + 1
+            end = node.end_point[0] + 1
+
+            if node.type in container_types and _has_symbol_descendant(node, symbol_types):
+                # Container with methods → emit only signature/docstring; the
+                # methods themselves come through on subsequent pops.
+                summary = _container_summary(node, source, language)
+                if summary and summary.strip():
+                    yield from _emit(
+                        summary, rel_path, language,
+                        kind=node.type, name=name,
+                        start=start, end=start + summary.count("\n"),
+                    )
+                    emitted_any = True
+            else:
+                content = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+                if content.strip():
+                    yield from _emit(
+                        content, rel_path, language,
+                        kind=node.type, name=name,
+                        start=start, end=end,
+                    )
+                    emitted_any = True
             # Still descend for nested symbols (methods inside a class)
         for child in reversed(getattr(node, "children", []) or []):
             stack.append(child)
@@ -136,6 +234,18 @@ def _ast_chunks(text: str, rel_path: str, language: str) -> Iterator[CodeChunk]:
     if not emitted_any:
         # e.g. a file of only imports / constants — fall back to lines
         yield from _fallback_chunks(text, rel_path, language)
+
+
+def _has_symbol_descendant(node, symbol_types: set[str]) -> bool:
+    """Non-recursive DFS: does any descendant of `node` (excluding node itself)
+    match one of the symbol node types?"""
+    stack = list(getattr(node, "children", []) or [])
+    while stack:
+        n = stack.pop()
+        if n.type in symbol_types:
+            return True
+        stack.extend(getattr(n, "children", []) or [])
+    return False
 
 
 def parse_file(file_entry) -> list[CodeChunk]:

@@ -31,9 +31,32 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} [{settings.ENV}]")
-    get_embedder()         
-    if settings.RERANK_ENABLED:
-        get_reranker()       
+    # Warm every model the request path uses so the first /query or
+    # /code-query/stream doesn't pay 20-40s of cold model loading. Both
+    # pipelines get warmed; a warm HFEmbedder is a no-op on the second call.
+    import asyncio as _asyncio
+
+    async def _warm() -> None:
+        # Fire loads in threads so a slow model download doesn't block startup
+        # of the other one. Failures are logged but non-fatal — the request
+        # path will retry (and surface the real error) on first use.
+        async def _safe(label: str, fn):
+            try:
+                await _asyncio.to_thread(fn)
+                logger.info(f"[warmup] {label} ready")
+            except Exception as exc:
+                logger.warning(f"[warmup] {label} failed: {exc}")
+
+        tasks = [
+            _safe("embedder:doc",  lambda: get_embedder(pipeline="doc")),
+            _safe("embedder:code", lambda: get_embedder(pipeline="code")),
+        ]
+        if settings.RERANK_ENABLED:
+            tasks.append(_safe("reranker:doc",  lambda: get_reranker(pipeline="doc")))
+            tasks.append(_safe("reranker:code", lambda: get_reranker(pipeline="code")))
+        await _asyncio.gather(*tasks)
+
+    await _warm()
     yield
     logger.info("Shutting down")
 

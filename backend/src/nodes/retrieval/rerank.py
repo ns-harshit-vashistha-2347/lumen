@@ -101,12 +101,21 @@ async def rerank_node(state: dict) -> dict:
     top_n = state.get("top_k", settings.RERANK_TOP_N)
     pipeline = state.get("pipeline", "doc")
 
+    if not fused_results:
+        return {"reranked_results": []}
+
+    # Cheap short-circuit: if fusion already returned ≤ top_n candidates,
+    # reranking can only permute them — no chunks get filtered out and the
+    # LLM sees the same set either way. Skip the 200-800ms CPU cost.
+    if len(fused_results) <= top_n:
+        logger.info(
+            f"[rerank_node] skipped: {len(fused_results)} candidates ≤ top_n={top_n} pipeline={pipeline}"
+        )
+        return {"reranked_results": fused_results}
+
     logger.info(
         f"[rerank_node] reranking {len(fused_results)} candidates -> top_n={top_n} pipeline={pipeline}"
     )
-
-    if not fused_results:
-        return {"reranked_results": []}
 
     # Run the blocking CPU work in a threadpool so the event loop stays
     # free to service other users' requests during rerank.

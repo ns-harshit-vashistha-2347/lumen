@@ -301,8 +301,8 @@ async def stream_code_query(
                  "end_line": c.metadata.get("end_line"),
                  "symbol_name": c.metadata.get("symbol_name"),
                  "symbol_kind": c.metadata.get("symbol_kind"),
-                 "score": float(c.metadata.get("score", 0.0)),
-                 "content": c.page_content}
+                 "score": float(getattr(c, "score", 0.0) or c.metadata.get("score", 0.0)),
+                 "content": c.content}
                 for c in chunks
             ],
         }

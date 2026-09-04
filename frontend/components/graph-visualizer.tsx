@@ -70,15 +70,15 @@ function layout(structure: GraphStructure) {
 
   const positions = new Map<string, { x: number; y: number }>();
   // Horizontal flow: layers advance in +x, siblings within a layer stack in +y.
-  const colW = 230;
-  const rowH = 72;
-  const marginX = 40;
+  const colW = 210;
+  const rowH = 68;
+  const marginX = 30;
   const maxRows = Math.max(1, ...layers.map((row) => row.length));
   const totalHeight = maxRows * rowH;
 
   layers.forEach((row, li) => {
     const colHeight = row.length * rowH;
-    const offsetY = (totalHeight - colHeight) / 2 + 40;
+    const offsetY = (totalHeight - colHeight) / 2 + 20;
     row.forEach((id, ci) => {
       positions.set(id, {
         x: marginX + li * colW,
@@ -89,7 +89,7 @@ function layout(structure: GraphStructure) {
   return { positions, layers };
 }
 
-const NODE_W = 168;
+const NODE_W = 160;
 const NODE_H = 46;
 
 // Friendly labels + one-line descriptions + phase category so a user can
@@ -100,6 +100,7 @@ const NODE_META: Record<
 > = {
   __start__:        { label: "START",        desc: "user query enters the pipeline",     phase: "input" },
   __end__:          { label: "END",          desc: "final answer returned to user",      phase: "output" },
+  // shared query pipeline
   prepare:          { label: "prepare",      desc: "normalise query · load history",     phase: "prep" },
   rewrite:          { label: "rewrite",      desc: "expand acronyms · clean up",         phase: "prep" },
   decompose:        { label: "decompose",    desc: "split into sub-questions",           phase: "prep" },
@@ -115,6 +116,15 @@ const NODE_META: Record<
   regenerate:       { label: "regenerate",   desc: "retry after failed verification",    phase: "generate" },
   verify:           { label: "verify",       desc: "grounding check on the answer",      phase: "verify" },
   finalize:         { label: "finalize",     desc: "attach citations · pack response",   phase: "output" },
+  // code query graph
+  graph_query:      { label: "graph query",  desc: "kuzu: symbols · imports · calls",    phase: "retrieve" },
+  ready:            { label: "ready",        desc: "context assembled — hand off",       phase: "generate" },
+  // ingestion graphs (docs + code)
+  parse:            { label: "parse",        desc: "extract text · tree-sitter parse",   phase: "prep" },
+  chunk:            { label: "chunk",        desc: "split into overlapping windows",     phase: "prep" },
+  embed:            { label: "embed",        desc: "bge-large-en · dims=1024",           phase: "retrieve" },
+  store:            { label: "store",        desc: "upsert vectors + metadata",          phase: "output" },
+  graph_build:      { label: "graph build",  desc: "kuzu: files · defs · calls",         phase: "output" },
 };
 
 const PHASE_META: Record<
@@ -211,10 +221,10 @@ export function GraphVisualizer({
     let w = 0;
     let h = 0;
     laid.positions.forEach((p) => {
-      w = Math.max(w, p.x + NODE_W + 40);
-      h = Math.max(h, p.y + NODE_H + 20);
+      w = Math.max(w, p.x + NODE_W);
+      h = Math.max(h, p.y + NODE_H);
     });
-    return { positions: laid.positions, width: w + 60, height: h + 60 };
+    return { positions: laid.positions, width: w + 30, height: h + 20 };
   }, [structure]);
 
   // trace playback
@@ -397,12 +407,16 @@ export function GraphVisualizer({
           </div>
         )}
 
-        <div className="grid flex-1 grid-cols-[minmax(0,1fr)_340px] overflow-hidden">
+        <div className="grid flex-1 grid-cols-[minmax(0,1fr)_300px] overflow-hidden">
           {/* left: graph */}
           <div className="relative overflow-auto bg-bg/40">
             <div aria-hidden className="pointer-events-none absolute inset-0 hacker-grid-fine opacity-40" />
             <div aria-hidden className="pointer-events-none absolute inset-0 crt-vignette" />
-            <div className="relative p-4">
+            {/* horizontal-scroll hint */}
+            <div className="pointer-events-none absolute right-2 top-2 z-10 rounded border border-chrome-border bg-bg-soft/80 px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.22em] text-ink-faint backdrop-blur">
+              ← scroll →
+            </div>
+            <div className="relative p-3">
             {loading && (
               <div className="flex h-full items-center justify-center font-mono text-[11px] text-ink-dim">
                 <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-prompt" />

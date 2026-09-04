@@ -26,6 +26,13 @@ export function MatrixRain({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Respect user's motion preference — never animate when reduced-motion.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      canvas.style.opacity = "0";
+      return;
+    }
+
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
     let height = 0;
@@ -56,7 +63,10 @@ export function MatrixRain({
 
     let raf = 0;
     let last = 0;
+    let running = true;
+
     const frame = (t: number) => {
+      if (!running) return;
       const dt = t - last;
       if (dt < 40 / speed) {
         raf = requestAnimationFrame(frame);
@@ -94,9 +104,25 @@ export function MatrixRain({
     };
     raf = requestAnimationFrame(frame);
 
+    // Pause when the tab is hidden — saves ~1-3% CPU / GPU on background tabs
+    // and keeps laptop fans quiet.
+    const onVisibility = () => {
+      if (document.hidden) {
+        running = false;
+        cancelAnimationFrame(raf);
+      } else if (!running) {
+        running = true;
+        last = 0;
+        raf = requestAnimationFrame(frame);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
+      running = false;
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [colorVar, headVar, speed]);
 

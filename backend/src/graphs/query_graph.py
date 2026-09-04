@@ -57,6 +57,43 @@ class QueryState(TypedDict, total=False):
     complexity: str
 
 
+_MULTI_HOP_MARKERS = (
+    " and ",
+    " vs ",
+    " versus ",
+    " compare ",
+    " compared ",
+    " difference between ",
+    " both ",
+    " each of ",
+    " list all ",
+)
+
+
+def _fast_classify(query: str) -> str | None:
+    """Cheap heuristic: return "simple" for short, single-intent factual
+    questions; "complex" for anything with connectors, comparisons, or long
+    phrasing; None if unsure (fall through to LLM classifier).
+
+    Runs in prepare_node so downstream rewrite/decompose/verify can skip
+    entirely when we're confident it's simple. Saves 2-3 LLM roundtrips."""
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    words = q.split()
+    n = len(words)
+    if n > 20:
+        return "complex"
+    if any(m in f" {q} " for m in _MULTI_HOP_MARKERS):
+        return "complex"
+    # Short factual lookups: "who / what / when / where / how many …" under 12 words.
+    if n <= 12 and words[0] in {"who", "what", "when", "where", "which", "define", "list"}:
+        return "simple"
+    if n <= 8:
+        return "simple"
+    return None  # let the LLM classifier decide
+
+
 def prepare_node(state: dict) -> dict:
     top_k = state.get("top_k", settings.RETRIEVAL_TOP_K)
 
@@ -65,7 +102,12 @@ def prepare_node(state: dict) -> dict:
     else:
         retrieval_k = top_k
 
-    return {"top_k": top_k, "retrieval_k": retrieval_k, "correction_attempts": 0}
+    out: dict = {"top_k": top_k, "retrieval_k": retrieval_k, "correction_attempts": 0}
+    if settings.QUERY_FAST_CLASSIFY:
+        pre = _fast_classify(state.get("query", ""))
+        if pre is not None:
+            out["complexity"] = pre
+    return out
 
 
 

@@ -2,6 +2,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from src.core.cache import cached_llm_invoke
 from src.core.config import settings
 from src.core.llm import get_llm
 from src.core.logging import get_logger
@@ -77,7 +78,7 @@ def verify_node(state: dict) -> dict:
     llm = get_llm(task="verify", temperature=0.0)
 
     try:
-        response = llm.invoke([
+        content = cached_llm_invoke("verify", llm, [
             SystemMessage(content=VERIFY_SYSTEM_PROMPT),
             HumanMessage(content=(
                 f"Question: {query}\n\n"
@@ -85,7 +86,7 @@ def verify_node(state: dict) -> dict:
                 f"Sources:\n{_format_sources(chunks)}"
             )),
         ])
-        parsed = json.loads(response.content.strip())
+        parsed = json.loads(content.strip())
         verdict = parsed.get("verdict", "grounded")
         reason = parsed.get("reason", "")
         unsupported = [c for c in (parsed.get("unsupported_claims") or []) if isinstance(c, str)]

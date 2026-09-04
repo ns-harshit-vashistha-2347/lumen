@@ -35,16 +35,40 @@ def get_bm25_version(collection_name: str) -> str:
     return value or "0"
 
 
-def query_cache_key(query: str, top_k: int, user_id: str) -> str:
+def _scope_digest(document_ids: list[str] | None) -> str:
+    """Stable digest of the scope. `None` and `[]` both mean 'whole library'
+    and must produce the same key so that scope is a first-class cache
+    dimension. Sorted so caller order doesn't matter."""
+    if not document_ids:
+        return "all"
+    return hashlib.sha1(",".join(sorted(document_ids)).encode()).hexdigest()[:16]
+
+
+def query_cache_key(
+    query: str,
+    top_k: int,
+    user_id: str,
+    document_ids: list[str] | None = None,
+) -> str:
     normalized = query.strip().lower()
-    digest = hashlib.sha256(f"{user_id}:{top_k}:{normalized}".encode()).hexdigest()
+    scope = _scope_digest(document_ids)
+    digest = hashlib.sha256(
+        f"{user_id}:{top_k}:{scope}:{normalized}".encode()
+    ).hexdigest()
     return f"query_cache:{digest}"
 
 
-def get_cached_query(query: str, top_k: int, user_id: str) -> dict | None:
+def get_cached_query(
+    query: str,
+    top_k: int,
+    user_id: str,
+    document_ids: list[str] | None = None,
+) -> dict | None:
     """Redis is a best-effort cache — never let a Redis outage take down /query."""
     try:
-        raw = get_redis_client().get(query_cache_key(query, top_k, user_id))
+        raw = get_redis_client().get(
+            query_cache_key(query, top_k, user_id, document_ids)
+        )
     except redis.RedisError as exc:
         logger.warning(f"query cache read failed: {exc}")
         return None
@@ -57,13 +81,111 @@ def get_cached_query(query: str, top_k: int, user_id: str) -> dict | None:
         return None
 
 
-def set_cached_query(query: str, top_k: int, user_id: str, payload: dict, ttl: int = 3600) -> None:
+def set_cached_query(
+    query: str,
+    top_k: int,
+    user_id: str,
+    payload: dict,
+    ttl: int = 3600,
+    document_ids: list[str] | None = None,
+) -> None:
     try:
         get_redis_client().set(
-            query_cache_key(query, top_k, user_id), json.dumps(payload), ex=ttl
+            query_cache_key(query, top_k, user_id, document_ids),
+            json.dumps(payload),
+            ex=ttl,
         )
     except (redis.RedisError, TypeError, ValueError) as exc:
         logger.warning(f"query cache write failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# LLM response cache
+#
+# For deterministic calls (classify / rewrite / verify with temperature=0),
+# identical prompts always yield identical outputs. Cache by
+# (task, model, prompt_hash) to skip repeat inference and reduce token spend.
+# NEVER cache streaming or non-deterministic calls; the caller must opt in.
+# ---------------------------------------------------------------------------
+
+def _llm_key(task: str, model: str, prompt: str) -> str:
+    digest = hashlib.sha1(f"{task}\x00{model}\x00{prompt}".encode("utf-8")).hexdigest()
+    return f"llm:{task}:{digest}"
+
+
+def get_cached_llm_response(task: str, model: str, prompt: str) -> str | None:
+    try:
+        raw = get_redis_client().get(_llm_key(task, model, prompt))
+    except redis.RedisError as exc:
+        logger.warning(f"llm cache read failed: {exc}")
+        return None
+    return raw if isinstance(raw, str) else None
+
+
+def set_cached_llm_response(
+    task: str, model: str, prompt: str, response: str, ttl: int = 3600
+) -> None:
+    try:
+        get_redis_client().set(_llm_key(task, model, prompt), response, ex=ttl)
+    except redis.RedisError as exc:
+        logger.warning(f"llm cache write failed: {exc}")
+
+
+def _messages_to_prompt(messages) -> str:
+    """Stable text serialization of LangChain messages for cache-key hashing.
+    We don't need to be exact — just deterministic + collision-resistant."""
+    parts = []
+    for m in messages or []:
+        role = getattr(m, "type", None) or getattr(m, "role", "") or "?"
+        content = getattr(m, "content", "") or ""
+        parts.append(f"{role}::{content}")
+    return "\n\x1e\n".join(parts)
+
+
+def _model_id_for(llm) -> str:
+    """Best-effort model identifier for cache-key stability. Uses the router's
+    task+tier when available, else the class name."""
+    for attr in ("_task", "task", "model_name", "model"):
+        v = getattr(llm, attr, None)
+        if v:
+            return str(v)
+    return llm.__class__.__name__
+
+
+def cached_llm_invoke(task: str, llm, messages, ttl: int | None = None) -> str:
+    """Sync cached invoke for deterministic (temperature=0) prompts.
+    Returns the `.content` string. Only enabled when
+    settings.LLM_RESPONSE_CACHE_ENABLED. Falls through on any cache failure."""
+    from src.core.config import settings as _s
+    if not _s.LLM_RESPONSE_CACHE_ENABLED:
+        return llm.invoke(messages).content
+    model = _model_id_for(llm)
+    prompt = _messages_to_prompt(messages)
+    hit = get_cached_llm_response(task, model, prompt)
+    if hit is not None:
+        logger.info(f"[llm cache] HIT task={task} model={model}")
+        return hit
+    resp = llm.invoke(messages)
+    content = resp.content or ""
+    set_cached_llm_response(task, model, prompt, content, ttl=ttl or _s.LLM_RESPONSE_CACHE_TTL)
+    return content
+
+
+async def cached_llm_ainvoke(task: str, llm, messages, ttl: int | None = None) -> str:
+    from src.core.config import settings as _s
+    if not _s.LLM_RESPONSE_CACHE_ENABLED:
+        r = await llm.ainvoke(messages)
+        return r.content
+    model = _model_id_for(llm)
+    prompt = _messages_to_prompt(messages)
+    hit = get_cached_llm_response(task, model, prompt)
+    if hit is not None:
+        logger.info(f"[llm cache] HIT task={task} model={model}")
+        return hit
+    resp = await llm.ainvoke(messages)
+    content = resp.content or ""
+    set_cached_llm_response(task, model, prompt, content, ttl=ttl or _s.LLM_RESPONSE_CACHE_TTL)
+    return content
 
 
 # ---------------------------------------------------------------------------

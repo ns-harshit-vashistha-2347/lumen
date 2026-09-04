@@ -51,8 +51,11 @@ async def run_query(
 
     # Cache is per-user; only safe to reuse when there is NO history since the
     # answer is conditioned on the conversation.
+    scope_ids = [str(d) for d in payload.document_ids] if payload.document_ids else None
     if not history:
-        cached = get_cached_query(payload.query, payload.top_k, str(current_user.id))
+        cached = get_cached_query(
+            payload.query, payload.top_k, str(current_user.id), scope_ids
+        )
         if cached is not None:
             logger.info(f"[/query] cache hit user_id={current_user.id}")
             if session is not None:
@@ -70,7 +73,7 @@ async def run_query(
         "query": payload.query,
         "top_k": payload.top_k,
         "user_id": str(current_user.id),
-        "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
+        "document_ids": scope_ids,
         "chat_history": history,
     }
     try:
@@ -109,6 +112,7 @@ async def run_query(
         set_cached_query(
             payload.query, payload.top_k, str(current_user.id),
             QueryResponse(**response_payload).model_dump(mode="json"),
+            document_ids=scope_ids,
         )
 
     return QueryResponse(

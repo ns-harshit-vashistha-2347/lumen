@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from src.core.logging import get_logger
 from src.core.vectorstore import get_collections
@@ -36,7 +37,28 @@ class DenseRetriever(BaseRetriever):
                 conditions.append({"document_id": {"$in": document_ids}})
 
         where = {"$and": conditions} if len(conditions) > 1 else (conditions[0] if conditions else None)
-        results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k, where=where)
+        # Small retry loop for transient Chroma HTTP blips (503, timeout, reset).
+        # 3 tries with jittered backoff — Chroma is either up or it isn't, so
+        # short and total-timeout-bounded.
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                results = self.collection.query(
+                    query_embeddings=[query_embedding], n_results=top_k, where=where
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — chroma raises many types
+                last_exc = exc
+                if attempt == 2:
+                    raise
+                delay = 0.15 * (2 ** attempt) + (0.05 * attempt)
+                logger.warning(
+                    f"[dense] chroma query failed (attempt {attempt+1}/3): {exc}; "
+                    f"retrying in {delay:.2f}s"
+                )
+                time.sleep(delay)
+        else:  # pragma: no cover — unreachable, break-or-raise above
+            raise last_exc or RuntimeError("chroma query failed")
 
 
         chunks = []

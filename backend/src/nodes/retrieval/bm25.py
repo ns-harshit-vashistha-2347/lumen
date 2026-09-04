@@ -14,11 +14,67 @@ logger = get_logger(__name__)
 
 _BM25_CACHE: dict[str, tuple] = {}
 
+# Extract [a-z0-9]+ tokens AND split CamelCase / snake_case into constituents
+# so a query for "getUser" also matches "get_user" and vice-versa. Keeps the
+# original token too so exact matches still score.
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
-_STOPWORDS = {"the", "a", "an", "is", "are", "of", "to", "in", "and", "or", "for", "on", "at"}
+_CAMEL_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+")
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "of", "to", "in", "on", "at", "by", "for", "with", "as", "from", "into",
+    "and", "or", "but", "not", "no",
+    "this", "that", "these", "those", "it", "its", "there", "here",
+    "do", "does", "did", "done", "have", "has", "had",
+    "i", "you", "he", "she", "we", "they", "them", "us", "me", "my", "your", "our",
+    "so", "if", "then", "than", "because",
+    "can", "will", "would", "should", "could", "may", "might",
+})
+
+# Snowball stemmer is optional — if installed, we use it. If not, we still
+# get camelCase/snake_case splitting + stopwording which is already a
+# meaningful upgrade over the previous 12-word stoplist.
+try:  # pragma: no cover — depends on env
+    from nltk.stem.snowball import SnowballStemmer  # type: ignore
+
+    _stemmer = SnowballStemmer("english")
+
+    def _stem(t: str) -> str:
+        return _stemmer.stem(t)
+except Exception:  # nltk not installed or data missing
+    _stemmer = None
+
+    def _stem(t: str) -> str:
+        return t
+
+
+def _split_identifier(raw: str) -> list[str]:
+    """Split a single alphanumeric token on camelCase / snake_case boundaries.
+    "getUserById" → ["getUserById", "get", "User", "By", "Id"]
+    "get_user_id" → ["get_user_id", "get", "user", "id"]
+    Returned pieces preserve their case; downstream will lowercase."""
+    pieces = [raw]
+    if "_" in raw:
+        pieces.extend(p for p in raw.split("_") if p)
+    if any(c.isupper() for c in raw):
+        pieces.extend(m.group(0) for m in _CAMEL_RE.finditer(raw))
+    return pieces
+
 
 def _tokenize(text: str) -> list[str]:
-    return [t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOPWORDS]
+    """Extract case-preserving alphanumeric tokens → split camelCase /
+    snake_case → lowercase → drop stopwords → optional Snowball stem.
+
+    Cached indexes rebuild every BM25_CACHE_TTL_SECONDS, so changes here
+    take at most one TTL cycle to apply."""
+    out: list[str] = []
+    for raw in re.findall(r"[A-Za-z0-9]+", text):
+        for piece in _split_identifier(raw):
+            low = piece.lower()
+            if not low or low in _STOPWORDS:
+                continue
+            out.append(_stem(low))
+    return out
 
 class BM25Retriever(BaseRetriever):
     def __init__(self, collection_name: str):

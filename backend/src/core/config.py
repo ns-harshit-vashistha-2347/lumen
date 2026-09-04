@@ -182,6 +182,16 @@ class Settings(BaseSettings):
 
 
     QUERY_CLASSIFIER_ENABLED: bool = True
+    # Cheap heuristic runs in prepare_node BEFORE the LLM classifier and skips
+    # rewrite/decompose/verify for questions that clearly don't need them.
+    # Saves 2-3 LLM roundtrips (~3-8s) on simple factual queries.
+    QUERY_FAST_CLASSIFY: bool = True
+
+    # Cache deterministic LLM calls (classify, rewrite, verify — anything with
+    # temperature=0). Keyed by (task, model, prompt_hash). Off by default in
+    # dev because it hides prompt-tuning changes; safe in prod.
+    LLM_RESPONSE_CACHE_ENABLED: bool = True
+    LLM_RESPONSE_CACHE_TTL: int = 3600
 
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
     # Code-tuned embedder used by the code-RAG pipeline. Different from the
@@ -208,10 +218,10 @@ class Settings(BaseSettings):
     RERANK_MODEL: str = "BAAI/bge-reranker-base"
     # Code-tuned cross-encoder for the code-RAG pipeline. Empty = reuse RERANK_MODEL.
     RERANK_MODEL_CODE: str = "jinaai/jina-reranker-v1-turbo-en"
-    # Trimmed for CPU: 6 candidates is enough for top_n=5, and 384 tokens
-    # covers the vast majority of chunks after symbol-chunking. ~40% faster
-    # rerank per request vs. the old 8 / 512 defaults.
-    RERANK_CANDIDATE_POOL: int = 6
+    # Larger pool → materially better final top_n quality. Reranker cost stays
+    # bounded by RERANK_MAX_LENGTH=384 and RERANK_BATCH_SIZE=32. If you're
+    # strictly CPU-bound and latency-sensitive, drop to 20; 40 is a good default.
+    RERANK_CANDIDATE_POOL: int = 40
     RERANK_TOP_N: int = 5
     RERANK_BATCH_SIZE: int = 32
     RERANK_MAX_LENGTH: int = 384

@@ -34,6 +34,12 @@ def query_rewrite_node(state: dict) -> dict:
     if not settings.QUERY_REWRITE_ENABLED:
         return {"queries": [raw_query], "primary_query": raw_query}
 
+    # Fast path: prepare_node already tagged this as a simple factual lookup.
+    # Rewrite is unlikely to help and costs an LLM roundtrip — skip.
+    if state.get("complexity") == "simple":
+        logger.info("[query_rewrite_node] skipped: complexity=simple")
+        return {"queries": [raw_query], "primary_query": raw_query}
+
     n_variants = settings.QUERY_EXPANSION_COUNT
     llm = get_llm(task="rewrite", temperature=0.3)
 

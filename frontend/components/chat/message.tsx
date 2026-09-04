@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Check, Copy, RefreshCw, Pencil, X as XIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { SourceChunk } from "@/lib/rag";
@@ -35,7 +35,7 @@ interface Props {
   onEditResend?: (m: ChatMessage, newContent: string) => void;
 }
 
-export function MessageBubble({ message, onRetry, onEditResend }: Props) {
+function MessageBubbleImpl({ message, onRetry, onEditResend }: Props) {
   const isUser = message.role === "user";
   const [editing, setEditing] = useState(false);
 
@@ -93,6 +93,18 @@ export function MessageBubble({ message, onRetry, onEditResend }: Props) {
     </article>
   );
 }
+
+// Memoized: a token-streaming update replaces the reference of one message
+// object at a time; every other bubble in the list gets a shallow-equal
+// `message` prop and skips render. Long chats no longer re-render O(n)
+// bubbles per token.
+export const MessageBubble = memo(MessageBubbleImpl, (a, b) => {
+  return (
+    a.message === b.message &&
+    a.onRetry === b.onRetry &&
+    a.onEditResend === b.onEditResend
+  );
+});
 
 function MessageHeader({
   message,

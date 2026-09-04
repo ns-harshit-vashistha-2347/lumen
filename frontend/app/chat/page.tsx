@@ -138,7 +138,11 @@ function ChatInner() {
 
   const abortRef = useRef<AbortController | null>(null);
 
-  async function submit(prompt?: string) {
+  // Ref pattern: `submit` closes over `scope`, `sessionId`, `sending`, etc.
+  // and would be a new reference every render, defeating MessageBubble's
+  // React.memo. `submitRef.current` stays fresh; the exported `submit`
+  // below is stable.
+  async function submitImpl(prompt?: string) {
     const text = (prompt ?? input).trim();
     if (!text || sending) return;
     if (handleSlash(text)) return;
@@ -239,28 +243,36 @@ function ChatInner() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  function findUserBefore(assistantId: string): ChatMessage | null {
-    const idx = messages.findIndex((m) => m.id === assistantId);
-    for (let i = idx - 1; i >= 0; i--) if (messages[i].role === "user") return messages[i];
-    return null;
-  }
+  const submitRef = useRef(submitImpl);
+  useEffect(() => { submitRef.current = submitImpl; });
+  const submit = useCallback((p?: string) => submitRef.current(p), []);
 
-  function onRetry(assistantMsg: ChatMessage) {
-    const user = findUserBefore(assistantMsg.id);
+  // Stable refs so memoized MessageBubble doesn't re-render every message
+  // on every keystroke / token. Both callbacks read from state via the
+  // current-value refs below, so they don't need messages in deps.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const onRetry = useCallback((assistantMsg: ChatMessage) => {
+    const msgs = messagesRef.current;
+    const idx = msgs.findIndex((m) => m.id === assistantMsg.id);
+    let user: ChatMessage | null = null;
+    for (let i = idx - 1; i >= 0; i--)
+      if (msgs[i].role === "user") { user = msgs[i]; break; }
     if (!user) return;
-    // Drop the assistant answer and re-ask
     setMessages((m) => m.filter((x) => x.id !== assistantMsg.id));
     submit(user.content);
-  }
+  }, []);
 
-  function onEditResend(userMsg: ChatMessage, newContent: string) {
-    // Drop this user turn and any messages after it, then re-submit with new text
+  const onEditResend = useCallback((userMsg: ChatMessage, newContent: string) => {
     setMessages((m) => {
       const idx = m.findIndex((x) => x.id === userMsg.id);
       return idx >= 0 ? m.slice(0, idx) : m;
     });
     submit(newContent);
-  }
+  }, []);
 
   return (
     <div className="relative flex h-[calc(100vh-2.75rem)] flex-col warp-ambient">

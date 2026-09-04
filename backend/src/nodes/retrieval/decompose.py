@@ -16,6 +16,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from src.core.cache import cached_llm_invoke
 from src.core.config import settings
 from src.core.llm import get_llm
 from src.core.logging import get_logger
@@ -56,15 +57,21 @@ def decompose_query_node(state: dict) -> dict:
     if not getattr(settings, "QUERY_DECOMPOSITION_ENABLED", True):
         return _fallback(state)
 
+    # Fast path: simple factual lookups are single-hop by construction.
+    # Skip the LLM roundtrip.
+    if state.get("complexity") == "simple":
+        logger.info("[decompose] skipped: complexity=simple")
+        return _fallback(state)
+
     raw = state.get("primary_query") or state["query"]
     llm = get_llm(task="rewrite", temperature=0.0)
 
     try:
-        resp = llm.invoke([
+        content = cached_llm_invoke("decompose", llm, [
             SystemMessage(content=DECOMPOSE_SYSTEM_PROMPT),
             HumanMessage(content=raw),
         ])
-        parsed = json.loads(resp.content.strip())
+        parsed = json.loads(content.strip())
         kind = (parsed.get("kind") or "single").lower()
         subs_raw = parsed.get("sub_questions") or []
         subs = [str(s).strip() for s in subs_raw if str(s).strip()][:_MAX_SUB_QUESTIONS]

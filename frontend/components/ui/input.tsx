@@ -25,7 +25,7 @@ export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElem
   return (
     <label
       className={cn(
-        "mb-1.5 block font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-dim",
+        "mb-1 block font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-dim",
         className
       )}
       {...props}

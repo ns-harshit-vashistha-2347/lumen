@@ -59,13 +59,13 @@ export default function SignupPage() {
     >
       <GoogleButton label="Sign up with Google" />
 
-      <div className="my-5 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.2em] text-ink-faint">
+      <div className="my-3 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.2em] text-ink-faint">
         <div className="h-px flex-1 bg-chrome-border" />
         <span>or</span>
         <div className="h-px flex-1 bg-chrome-border" />
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-3">
         <div>
           <Label htmlFor="name">Full name</Label>
           <Input
@@ -102,7 +102,7 @@ export default function SignupPage() {
           />
         </div>
 
-        <Button type="submit" loading={loading} className="w-full" size="lg">
+        <Button type="submit" loading={loading} className="mt-1 w-full" size="md">
           CREATE ACCOUNT <span className="text-[9px] opacity-70">↵</span>
         </Button>
       </form>

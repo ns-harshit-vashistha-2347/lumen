@@ -70,15 +70,17 @@ function layout(structure: GraphStructure) {
 
   const positions = new Map<string, { x: number; y: number }>();
   // Vertical flow: layers advance in +y, siblings within a layer spread in +x.
-  const colW = 190;
-  const rowH = 82;
-  const marginY = 20;
+  // Generous gaps: horizontal ~60px between nodes, vertical ~60px between
+  // rows, so bezier edges don't crash into neighboring boxes.
+  const colW = 230;
+  const rowH = 110;
+  const marginY = 30;
   const maxCols = Math.max(1, ...layers.map((row) => row.length));
   const totalWidth = maxCols * colW;
 
   layers.forEach((row, li) => {
     const rowWidth = row.length * colW;
-    const offsetX = (totalWidth - rowWidth) / 2 + 30;
+    const offsetX = (totalWidth - rowWidth) / 2 + 40;
     row.forEach((id, ci) => {
       positions.set(id, {
         x: offsetX + ci * colW,
@@ -89,8 +91,8 @@ function layout(structure: GraphStructure) {
   return { positions, layers };
 }
 
-const NODE_W = 168;
-const NODE_H = 46;
+const NODE_W = 170;
+const NODE_H = 50;
 
 // Friendly labels + one-line descriptions + phase category so a user can
 // understand what the pipeline does at a glance.

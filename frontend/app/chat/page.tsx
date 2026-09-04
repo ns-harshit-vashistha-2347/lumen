@@ -185,13 +185,45 @@ function ChatInner() {
         onMeta: (meta) => {
           const sid = meta.session_id as string | null | undefined;
           const tid = meta.trace_id as string | null | undefined;
-          const sources = meta.sources as ChatMessage["streamingSources"] | undefined;
+          const rawSources = meta.sources as Array<Record<string, unknown>> | undefined;
           if (sid && !sessionId) setSessionId(sid);
           if (tid) setLastTraceId(tid);
+
+          // Backend meta may include full chunk `content` + `metadata` (doc
+          // stream after this PR) or flat fields (code stream). Build full
+          // SourceChunk[] up-front so the sources panel is available the
+          // moment streaming ends — no second round-trip needed.
+          const fullSources = (rawSources || [])
+            .map((s) => {
+              const content = (s.content as string) || "";
+              if (!content) return null;
+              const md =
+                (s.metadata as Record<string, unknown> | undefined) ||
+                {
+                  source: s.source,
+                  page_number: s.page,
+                  path: s.path,
+                  start_line: s.start_line,
+                  end_line: s.end_line,
+                  symbol_name: s.symbol_name,
+                };
+              return {
+                content,
+                metadata: md,
+                score: (s.score as number) ?? 0,
+              };
+            })
+            .filter(Boolean) as ChatMessage["sources"];
+
           setMessages((m) =>
             m.map((msg) =>
               msg.id === loadingId
-                ? { ...msg, loading: false, streamingSources: sources || undefined }
+                ? {
+                    ...msg,
+                    loading: false,
+                    streamingSources: (rawSources as ChatMessage["streamingSources"]) || undefined,
+                    sources: (fullSources && fullSources.length > 0) ? fullSources : msg.sources,
+                  }
                 : msg
             )
           );

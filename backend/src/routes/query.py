@@ -163,15 +163,29 @@ async def run_query_stream(
 
     async def token_stream():
         import json
+        # Full sources in the meta header so the client can render the same
+        # cited-passage UI that the non-streaming endpoint returns — the
+        # bytes are already loaded and would need to be resent otherwise.
         header = {
             "type": "meta",
             "session_id": str(session.id) if session else None,
             "trace_id": trace_id,
             "sources": [
                 {
+                    "content": (
+                        c.metadata.get("original_content")
+                        or c.metadata.get("raw_content", c.content)
+                    ),
+                    "metadata": c.metadata,
+                    "score": c.score,
+                    # keep the light preview fields so the streaming skeleton
+                    # can still render before the answer lands.
                     "source": c.metadata.get("source"),
                     "page": c.metadata.get("page_number") or c.metadata.get("page"),
-                    "score": c.score,
+                    "path": c.metadata.get("path"),
+                    "start_line": c.metadata.get("start_line"),
+                    "end_line": c.metadata.get("end_line"),
+                    "symbol_name": c.metadata.get("symbol_name"),
                 }
                 for c in chunks
             ],

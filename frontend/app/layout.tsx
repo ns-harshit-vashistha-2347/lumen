@@ -32,8 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-bg text-ink antialiased">
         <div className="pointer-events-none fixed inset-0 -z-10">
-          <div className="absolute inset-0 warp-grid opacity-60" />
+          <div className="absolute inset-0 hacker-grid opacity-60" />
           <div className="absolute inset-0 warp-ambient" />
+          <div className="absolute inset-0 bg-scanline opacity-30 mix-blend-overlay" />
+          <div className="absolute inset-0 crt-vignette" />
         </div>
 
         {children}

@@ -67,21 +67,27 @@ export function AppChrome() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-chrome-border bg-chrome/90 backdrop-blur-xl">
+      {/* neon underline glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-prompt/70 to-transparent"
+      />
       <div className="flex h-11 items-center gap-3 px-3">
         {/* traffic-light dots */}
         <div className="flex items-center gap-1.5 pl-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-danger/80" />
-          <span className="h-2.5 w-2.5 rounded-full bg-warn/80" />
-          <span className="h-2.5 w-2.5 rounded-full bg-ok/80" />
+          <span className="h-2.5 w-2.5 rounded-full bg-danger/80 shadow-[0_0_6px_currentColor]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-warn/80 shadow-[0_0_6px_currentColor]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-ok/80 shadow-[0_0_6px_currentColor]" />
         </div>
 
         {/* brand + path */}
         <div className="ml-2 flex items-center gap-2 font-mono text-[11.5px] tracking-tight text-ink-dim">
-          <span className="text-prompt">◆</span>
-          <span className="text-ink">lumen</span>
+          <span className="text-prompt drop-shadow-[0_0_6px_rgba(249,38,114,0.7)]">◆</span>
+          <span className="font-bold text-ink neon-text tracking-wider">LUMEN</span>
           <span className="text-ink-faint">·</span>
           <span className="text-prompt">▸</span>
           <span className="text-ink">{activeTab}</span>
+          <span className="caret ml-0.5 text-prompt" />
         </div>
 
         {/* tabs */}

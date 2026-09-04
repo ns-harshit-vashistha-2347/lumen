@@ -88,13 +88,59 @@ function layout(structure: GraphStructure) {
   return { positions, layers };
 }
 
-const NODE_W = 148;
-const NODE_H = 40;
+const NODE_W = 168;
+const NODE_H = 46;
+
+// Friendly labels + one-line descriptions + phase category so a user can
+// understand what the pipeline does at a glance.
+const NODE_META: Record<
+  string,
+  { label: string; desc: string; phase: "input" | "prep" | "retrieve" | "rerank" | "generate" | "verify" | "output" }
+> = {
+  __start__:        { label: "START",        desc: "user query enters the pipeline",     phase: "input" },
+  __end__:          { label: "END",          desc: "final answer returned to user",      phase: "output" },
+  prepare:          { label: "prepare",      desc: "normalise query · load history",     phase: "prep" },
+  rewrite:          { label: "rewrite",      desc: "expand acronyms · clean up",         phase: "prep" },
+  decompose:        { label: "decompose",    desc: "split into sub-questions",           phase: "prep" },
+  classify:         { label: "classify",     desc: "route: chit-chat vs retrieval",      phase: "prep" },
+  bm25:             { label: "bm25",         desc: "keyword search (sparse)",            phase: "retrieve" },
+  dense:            { label: "dense",        desc: "vector search (embedding)",          phase: "retrieve" },
+  expand_retrieval: { label: "expand",       desc: "widen the search net",               phase: "retrieve" },
+  fusion:           { label: "fusion",       desc: "merge sparse + dense results",       phase: "retrieve" },
+  mmr:              { label: "mmr",          desc: "diversify — drop near-duplicates",   phase: "rerank" },
+  rerank:           { label: "rerank",       desc: "cross-encoder relevance rerank",     phase: "rerank" },
+  compression:      { label: "compress",     desc: "trim to relevant passages only",     phase: "rerank" },
+  generation:       { label: "generate",     desc: "llm drafts the answer",              phase: "generate" },
+  regenerate:       { label: "regenerate",   desc: "retry after failed verification",    phase: "generate" },
+  verify:           { label: "verify",       desc: "grounding check on the answer",      phase: "verify" },
+  finalize:         { label: "finalize",     desc: "attach citations · pack response",   phase: "output" },
+};
+
+const PHASE_META: Record<
+  string,
+  { label: string; color: string; dim: string }
+> = {
+  input:    { label: "INPUT",    color: "rgb(var(--c-ink-dim))",   dim: "rgb(var(--c-ink-dim) / 0.08)" },
+  prep:     { label: "PREP",     color: "rgb(var(--c-mk-blue))",   dim: "rgb(var(--c-mk-blue) / 0.08)" },
+  retrieve: { label: "RETRIEVE", color: "rgb(var(--c-mk-yellow))", dim: "rgb(var(--c-mk-yellow) / 0.08)" },
+  rerank:   { label: "RERANK",   color: "rgb(var(--c-mk-purple))", dim: "rgb(var(--c-mk-purple) / 0.08)" },
+  generate: { label: "GENERATE", color: "rgb(var(--c-prompt))",    dim: "rgb(var(--c-prompt) / 0.08)" },
+  verify:   { label: "VERIFY",   color: "rgb(var(--c-warn))",      dim: "rgb(var(--c-warn) / 0.08)" },
+  output:   { label: "OUTPUT",   color: "rgb(var(--c-mk-green))",  dim: "rgb(var(--c-mk-green) / 0.08)" },
+};
+
+function nodeMeta(id: string) {
+  return (
+    NODE_META[id] || {
+      label: id,
+      desc: "custom node",
+      phase: "prep" as const,
+    }
+  );
+}
 
 function shortLabel(id: string) {
-  if (id === "__start__") return "START";
-  if (id === "__end__") return "END";
-  return id;
+  return nodeMeta(id).label;
 }
 
 export function GraphVisualizer({
@@ -371,8 +417,8 @@ export function GraphVisualizer({
               <svg
                 viewBox={`0 0 ${width} ${height}`}
                 width="100%"
-                style={{ maxHeight: "70vh" }}
-                preserveAspectRatio="xMidYMid meet"
+                style={{ display: "block", maxWidth: "100%", height: "auto" }}
+                preserveAspectRatio="xMidYMin meet"
               >
                 <defs>
                   <marker
@@ -487,6 +533,8 @@ export function GraphVisualizer({
                   if (!p) return null;
                   const current = isCurrent(n.id);
                   const wasVisited = visited.has(n.id);
+                  const meta = nodeMeta(n.id);
+                  const phase = PHASE_META[meta.phase];
                   const fill = current
                     ? "url(#node-current)"
                     : wasVisited
@@ -501,7 +549,7 @@ export function GraphVisualizer({
                     ? "rgb(var(--c-prompt-glow))"
                     : wasVisited
                     ? "rgb(var(--c-ink))"
-                    : "rgb(var(--c-ink-dim))";
+                    : "rgb(var(--c-ink))";
                   return (
                     <g
                       key={n.id}
@@ -516,6 +564,7 @@ export function GraphVisualizer({
                       className={cn("transition", trace ? "cursor-pointer" : "cursor-default")}
                       style={current ? { filter: "url(#glow)" } : undefined}
                     >
+                      <title>{meta.label} — {meta.desc}</title>
                       {/* halo for current */}
                       {current && (
                         <rect
@@ -544,10 +593,20 @@ export function GraphVisualizer({
                         stroke={stroke}
                         strokeWidth={current ? 1.75 : 1}
                       />
-                      {/* left status pip */}
+                      {/* phase color stripe on left edge */}
+                      <rect
+                        x={0}
+                        y={0}
+                        width={5}
+                        height={NODE_H}
+                        rx={2.5}
+                        fill={phase.color}
+                        opacity={current ? 1 : wasVisited ? 0.85 : 0.55}
+                      />
+                      {/* status pip */}
                       <circle
-                        cx={10}
-                        cy={NODE_H / 2}
+                        cx={16}
+                        cy={13}
                         r={3}
                         fill={
                           current
@@ -566,36 +625,90 @@ export function GraphVisualizer({
                           />
                         )}
                       </circle>
+                      {/* phase label */}
                       <text
-                        x={NODE_W / 2 + 6}
-                        y={NODE_H / 2 + 4}
-                        textAnchor="middle"
+                        x={NODE_W - 8}
+                        y={13}
+                        textAnchor="end"
+                        fill={phase.color}
+                        opacity={0.85}
+                        style={{
+                          fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+                          fontSize: 8.5,
+                          fontWeight: 600,
+                          letterSpacing: 1,
+                        }}
+                      >
+                        {phase.label}
+                      </text>
+                      {/* node name */}
+                      <text
+                        x={24}
+                        y={28}
                         fill={textFill}
                         style={{
                           fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-                          fontSize: 12,
-                          fontWeight: current ? 700 : 500,
-                          letterSpacing: 0.5,
+                          fontSize: 13,
+                          fontWeight: current ? 700 : 600,
+                          letterSpacing: 0.3,
                         }}
                       >
-                        {shortLabel(n.id)}
+                        {meta.label}
                       </text>
-                      {/* right conditional/END badge */}
-                      {(n.id === "__end__" || n.id === "__start__") && (
-                        <rect
-                          x={NODE_W - 8}
-                          y={NODE_H / 2 - 3}
-                          width={4}
-                          height={6}
-                          fill="rgb(var(--c-prompt))"
-                        />
-                      )}
+                      {/* description */}
+                      <text
+                        x={24}
+                        y={NODE_H - 6}
+                        fill={
+                          current
+                            ? "rgb(var(--c-prompt-glow) / 0.85)"
+                            : "rgb(var(--c-ink-dim))"
+                        }
+                        style={{
+                          fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+                          fontSize: 9,
+                          letterSpacing: 0.2,
+                        }}
+                      >
+                        {meta.desc.length > 30 ? meta.desc.slice(0, 29) + "…" : meta.desc}
+                      </text>
                     </g>
                   );
                 })}
               </svg>
             )}
             </div>
+            {/* legend */}
+            {structure && !loading && !err && (
+              <div className="sticky bottom-0 border-t border-chrome-border bg-bg/85 px-3 py-2 backdrop-blur">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[9.5px] uppercase tracking-[0.2em] text-ink-faint">
+                  <span className="text-ink-dim">phases:</span>
+                  {Object.entries(PHASE_META).map(([k, m]) => (
+                    <span key={k} className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block h-2 w-2 rounded-sm"
+                        style={{ background: m.color, boxShadow: `0 0 6px ${m.color}` }}
+                      />
+                      <span style={{ color: m.color }}>{m.label}</span>
+                    </span>
+                  ))}
+                  <span className="ml-auto flex items-center gap-3">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-full bg-ink-faint" />
+                      <span>idle</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-full bg-ok shadow-[0_0_6px_currentColor] text-ok" />
+                      <span className="text-ok">visited</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-full bg-prompt shadow-[0_0_6px_currentColor] text-prompt animate-pulse" />
+                      <span className="text-prompt">current</span>
+                    </span>
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* right: trace panel */}
@@ -610,9 +723,59 @@ export function GraphVisualizer({
               )}
             </div>
             {!trace && (
-              <div className="p-3 font-mono text-[11px] text-ink-dim">
-                Ask a question in the chat to attach a live trace — each node&apos;s
-                input keys and output preview will appear here.
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] text-ink-dim">
+                <p className="mb-2">
+                  <span className="text-prompt">▸</span> Ask a question in the chat
+                  to attach a <span className="text-mk-yellow">live trace</span>.
+                  Nodes will glow as they execute and you&apos;ll see their input
+                  keys + output preview here.
+                </p>
+                <div className="mt-3 rounded border border-chrome-border bg-bg/60 p-2">
+                  <div className="mb-1.5 text-[9.5px] uppercase tracking-[0.2em] text-ink-faint">
+                    how the pipeline works
+                  </div>
+                  <ol className="space-y-1.5">
+                    {(Object.keys(PHASE_META) as (keyof typeof PHASE_META)[]).map((k, i) => {
+                      const m = PHASE_META[k];
+                      const blurbs: Record<string, string> = {
+                        input: "your question enters",
+                        prep: "clean up · rewrite · decompose",
+                        retrieve: "sparse + dense search over your corpus",
+                        rerank: "cross-encoder rank · diversify · compress",
+                        generate: "llm drafts a grounded answer",
+                        verify: "self-check citations · retry if weak",
+                        output: "attach sources · return",
+                      };
+                      return (
+                        <li key={k} className="flex items-start gap-2">
+                          <span
+                            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[9px] font-bold"
+                            style={{
+                              background: m.dim,
+                              color: m.color,
+                              boxShadow: `0 0 6px ${m.color}55`,
+                            }}
+                          >
+                            {i + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <div
+                              className="text-[10.5px] font-semibold tracking-[0.14em]"
+                              style={{ color: m.color }}
+                            >
+                              {m.label}
+                            </div>
+                            <div className="text-[10.5px] text-ink-dim">{blurbs[k]}</div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+                <div className="mt-2 text-[10px] text-ink-faint">
+                  <span className="text-mk-comment">tip:</span> click any node in the
+                  graph to jump to that step in a live trace.
+                </div>
               </div>
             )}
             {trace && (
@@ -661,17 +824,40 @@ function TraceStep({
           onSelect();
           setOpen((v) => !v);
         }}
-        className="flex w-full items-center gap-1.5 text-left"
+        className="flex w-full items-start gap-1.5 text-left"
       >
         {open ? (
-          <ChevronDown className="h-3 w-3 text-ink-faint" />
+          <ChevronDown className="mt-0.5 h-3 w-3 shrink-0 text-ink-faint" />
         ) : (
-          <ChevronRight className="h-3 w-3 text-ink-faint" />
+          <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-ink-faint" />
         )}
-        <span className="text-ink-faint">#{event.step}</span>
-        <span className={cn("truncate", selected ? "text-prompt" : "text-ink")}>
-          {event.node}
-        </span>
+        {(() => {
+          const meta = nodeMeta(event.node || "");
+          const phase = PHASE_META[meta.phase];
+          return (
+            <>
+              <span
+                className="mt-0.5 inline-block h-3 w-[3px] shrink-0 rounded-sm"
+                style={{ background: phase.color, boxShadow: `0 0 4px ${phase.color}` }}
+              />
+              <span className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-ink-faint">#{event.step}</span>
+                  <span className={cn("truncate", selected ? "text-prompt" : "text-ink")}>
+                    {meta.label}
+                  </span>
+                  <span
+                    className="ml-auto rounded-sm px-1 text-[8.5px] uppercase tracking-[0.18em]"
+                    style={{ color: phase.color, background: phase.dim }}
+                  >
+                    {phase.label}
+                  </span>
+                </div>
+                <div className="truncate text-[10px] text-ink-dim">{meta.desc}</div>
+              </span>
+            </>
+          );
+        })()}
       </button>
       {open && (
         <div className="mt-2 space-y-3 pl-4">

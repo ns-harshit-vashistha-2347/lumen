@@ -69,27 +69,27 @@ function layout(structure: GraphStructure) {
   });
 
   const positions = new Map<string, { x: number; y: number }>();
-  // Horizontal flow: layers advance in +x, siblings within a layer stack in +y.
-  const colW = 210;
-  const rowH = 68;
-  const marginX = 30;
-  const maxRows = Math.max(1, ...layers.map((row) => row.length));
-  const totalHeight = maxRows * rowH;
+  // Vertical flow: layers advance in +y, siblings within a layer spread in +x.
+  const colW = 190;
+  const rowH = 82;
+  const marginY = 20;
+  const maxCols = Math.max(1, ...layers.map((row) => row.length));
+  const totalWidth = maxCols * colW;
 
   layers.forEach((row, li) => {
-    const colHeight = row.length * rowH;
-    const offsetY = (totalHeight - colHeight) / 2 + 20;
+    const rowWidth = row.length * colW;
+    const offsetX = (totalWidth - rowWidth) / 2 + 30;
     row.forEach((id, ci) => {
       positions.set(id, {
-        x: marginX + li * colW,
-        y: offsetY + ci * rowH,
+        x: offsetX + ci * colW,
+        y: marginY + li * rowH,
       });
     });
   });
   return { positions, layers };
 }
 
-const NODE_W = 160;
+const NODE_W = 168;
 const NODE_H = 46;
 
 // Friendly labels + one-line descriptions + phase category so a user can
@@ -412,9 +412,9 @@ export function GraphVisualizer({
           <div className="relative overflow-auto bg-bg/40">
             <div aria-hidden className="pointer-events-none absolute inset-0 hacker-grid-fine opacity-40" />
             <div aria-hidden className="pointer-events-none absolute inset-0 crt-vignette" />
-            {/* horizontal-scroll hint */}
+            {/* vertical-scroll hint */}
             <div className="pointer-events-none absolute right-2 top-2 z-10 rounded border border-chrome-border bg-bg-soft/80 px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.22em] text-ink-faint backdrop-blur">
-              ← scroll →
+              ↑ scroll ↓
             </div>
             <div className="relative p-3">
             {loading && (
@@ -433,8 +433,8 @@ export function GraphVisualizer({
                 viewBox={`0 0 ${width} ${height}`}
                 width={width}
                 height={height}
-                style={{ display: "block" }}
-                preserveAspectRatio="xMinYMid meet"
+                style={{ display: "block", width: "100%", height: "auto", maxWidth: "100%" }}
+                preserveAspectRatio="xMidYMin meet"
               >
                 <defs>
                   <marker
@@ -503,14 +503,14 @@ export function GraphVisualizer({
                   const s = positions.get(e.source);
                   const t = positions.get(e.target);
                   if (!s || !t) return null;
-                  // Right edge of source → left edge of target, horizontal flow
-                  const x1 = s.x + NODE_W;
-                  const y1 = s.y + NODE_H / 2;
-                  const x2 = t.x;
-                  const y2 = t.y + NODE_H / 2;
-                  const cx = (x1 + x2) / 2;
+                  // Bottom edge of source → top edge of target, vertical flow
+                  const x1 = s.x + NODE_W / 2;
+                  const y1 = s.y + NODE_H;
+                  const x2 = t.x + NODE_W / 2;
+                  const y2 = t.y;
+                  const cy = (y1 + y2) / 2;
                   // Bezier curve for smoothness
-                  const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+                  const d = `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`;
                   const traversed = traversedEdges.has(`${i}`);
                   const active = activeEdgeIdx.has(i);
                   const stroke = active

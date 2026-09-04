@@ -27,12 +27,14 @@ export default function RootPage() {
   useEffect(() => {
     let i = 0;
     const id = setInterval(() => {
-      setLines((prev) => [...prev, BOOT_LINES[i]]);
-      i++;
       if (i >= BOOT_LINES.length) {
         clearInterval(id);
         setDone(true);
+        return;
       }
+      const next = BOOT_LINES[i];
+      i++;
+      setLines((prev) => (prev.length >= BOOT_LINES.length ? prev : [...prev, next]));
     }, 90);
     return () => clearInterval(id);
   }, []);
@@ -84,6 +86,7 @@ export default function RootPage() {
           <div className="p-4 font-mono text-[12px] leading-[1.55] text-ink-dim">
             <div className="text-mk-green">$ ./boot --profile=prod --verbose</div>
             {lines.map((l, i) => {
+              if (typeof l !== "string") return null;
               const okIdx = l.lastIndexOf("[ ok ]");
               if (okIdx < 0) {
                 return (

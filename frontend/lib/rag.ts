@@ -45,6 +45,25 @@ export interface DocumentPreview {
   }[];
 }
 
+export interface DocumentChunk {
+  id: string;
+  content: string;
+  chunk_index?: number | null;
+  page?: number | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  start_char?: number | null;
+  end_char?: number | null;
+  source?: string | null;
+}
+
+export interface DocumentChunksResponse {
+  id: string;
+  filename: string;
+  extension: string;
+  chunks: DocumentChunk[];
+}
+
 export const docsApi = {
   list: () => api.get<Document[]>("/documents"),
   upload: (file: File) =>
@@ -56,6 +75,12 @@ export const docsApi = {
   delete: (id: string) => api.del<void>(`/documents/${id}`),
   preview: (id: string, limit = 8) =>
     api.get<DocumentPreview>(`/documents/${id}/preview?limit=${limit}`),
+  chunks: (id: string) =>
+    api.get<DocumentChunksResponse>(`/documents/${id}/chunks`),
+  // Raw file URL — used by <iframe> for PDFs. Bearer token is added by
+  // the same fetch wrapper as api.get; for iframe use we build a
+  // one-shot signed URL via the helper below.
+  rawUrl: (id: string) => `/documents/${id}/raw`,
 };
 
 export const queryApi = {

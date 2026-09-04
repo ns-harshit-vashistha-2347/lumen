@@ -1,7 +1,9 @@
 import os
+import mimetypes
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -171,6 +173,106 @@ async def preview_document(
         "status": doc.status.value if hasattr(doc.status, "value") else str(doc.status),
         "chunk_count": doc.chunk_count,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "chunks": chunks,
+    }
+
+
+# --------------------------------------------------------------------------
+# Source viewer endpoints — power the click-through from a chat citation
+# to the original document with the exact passage highlighted.
+# --------------------------------------------------------------------------
+
+
+@document_router.get("/{document_id}/raw")
+async def raw_document(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stream the original uploaded file back to the owner. Used by the
+    in-app document viewer to render PDFs natively via an <iframe>. Never
+    exposed anonymously — the owner-check is enforced on every request."""
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id, Document.user_id == current_user.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.file_path or not os.path.exists(doc.file_path):
+        raise HTTPException(status_code=410, detail="Original file no longer on disk")
+    mime, _ = mimetypes.guess_type(doc.filename)
+    return FileResponse(
+        doc.file_path,
+        media_type=mime or "application/octet-stream",
+        filename=doc.filename,
+        # inline so PDFs render in <iframe>/<embed>, not download-forced.
+        headers={"Content-Disposition": f'inline; filename="{doc.filename}"'},
+    )
+
+
+@document_router.get("/{document_id}/chunks")
+async def list_document_chunks(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every indexed chunk of the document with its metadata
+    (chunk_index, page, start/end line offsets). The viewer uses this to
+    show a chunk sidebar and to highlight all-other citations in the same
+    doc while one is being inspected."""
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id, Document.user_id == current_user.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks: list[dict] = []
+    if doc.status == DocumentStatus.COMPLETED:
+        try:
+            collection = get_collections(settings.CHROMA_COLLECTION_DOCUMENTS)
+            data = collection.get(
+                where={"$and": [
+                    {"user_id": str(current_user.id)},
+                    {"document_id": str(document_id)},
+                ]},
+                include=["metadatas", "documents"],
+            )
+            ids = data.get("ids", []) or []
+            documents = data.get("documents", []) or []
+            metadatas = data.get("metadatas", []) or []
+            for cid, content, metadata in zip(ids, documents, metadatas):
+                md = metadata or {}
+                chunks.append({
+                    "id": cid,
+                    "content": content or "",
+                    "chunk_index": md.get("chunk_index"),
+                    "page": md.get("page_number") or md.get("page"),
+                    "start_line": md.get("start_line"),
+                    "end_line": md.get("end_line"),
+                    "start_char": md.get("start_char"),
+                    "end_char": md.get("end_char"),
+                    "source": md.get("source") or doc.filename,
+                })
+            # Order by chunk_index when available so the client can
+            # reconstruct a stable "reading order".
+            chunks.sort(
+                key=lambda c: (
+                    c.get("chunk_index") if c.get("chunk_index") is not None else 10**9
+                )
+            )
+        except Exception as exc:
+            logger.warning(f"[/documents/chunks] chroma fetch failed: {exc}")
+
+    _, ext = os.path.splitext(doc.filename or "")
+    return {
+        "id": str(doc.id),
+        "filename": doc.filename,
+        "extension": ext.lower().lstrip("."),
         "chunks": chunks,
     }
 

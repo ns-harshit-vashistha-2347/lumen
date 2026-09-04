@@ -135,4 +135,23 @@ export const api = {
     fd.append("file", file);
     return request<T>(path, { method: "POST", formData: fd, auth });
   },
+  // Fetch a raw file as a Blob URL with the Bearer token attached. Iframes
+  // can't carry Authorization headers, so callers must use this to get a
+  // blob: URL suitable as an <iframe src>. Remember to URL.revokeObjectURL
+  // the returned string when done.
+  blobUrl: async (path: string): Promise<string> => {
+    const doFetch = async (accessToken: string | null) => {
+      const headers: Record<string, string> = {};
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      return fetch(`${API_URL}${path}`, { headers });
+    };
+    let res = await doFetch(tokenStore.getAccess());
+    if (res.status === 401) {
+      const t = await refreshAccessToken();
+      if (t) res = await doFetch(t);
+    }
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
 };

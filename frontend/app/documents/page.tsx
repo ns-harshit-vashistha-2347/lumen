@@ -28,6 +28,7 @@ import { docsApi, type Document } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useScope } from "@/lib/scope-store";
+import { MatrixRain } from "@/components/matrix-rain";
 
 const ACTIVE_STATUSES = new Set<Document["status"]>([
   "queued",
@@ -354,12 +355,19 @@ function DocumentsInner() {
   return (
     <div className="relative h-[calc(100vh-2.75rem)] overflow-y-auto bg-bg">
       {/* ambient hacker background */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <MatrixRain opacity={0.14} speed={0.6} />
+      </div>
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 warp-ambient" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 warp-grid opacity-[0.3]" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 hacker-grid opacity-40" />
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+        className="pointer-events-none fixed inset-0 z-0 bg-scanline opacity-50 mix-blend-overlay"
       />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="scan-line" />
+      </div>
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 crt-vignette" />
 
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-5 font-mono">
         {/* header */}

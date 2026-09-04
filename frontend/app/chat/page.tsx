@@ -10,6 +10,7 @@ import { MessageBubble, type ChatMessage } from "@/components/chat/message";
 import { ScopeBar } from "@/components/chat/scope-bar";
 import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
 import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
+import { MatrixRain } from "@/components/matrix-rain";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
 import { useScope } from "@/lib/scope-store";
@@ -263,16 +264,25 @@ function ChatInner() {
 
   return (
     <div className="relative flex h-[calc(100vh-2.75rem)] flex-col warp-ambient">
+      {/* matrix rain — very faint */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <MatrixRain opacity={0.14} speed={0.6} />
+      </div>
       {/* subtle scanline overlay for that CRT feel */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-50 mix-blend-overlay"
       />
-      {/* faint grid glow */}
+      {/* hacker grid */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 warp-grid opacity-[0.35]"
+        className="pointer-events-none absolute inset-0 z-0 hacker-grid opacity-40"
       />
+      {/* moving scan line */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <div className="scan-line" />
+      </div>
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 crt-vignette" />
 
       {/* scope bar */}
       <div className="relative z-10 border-b border-chrome-border bg-chrome/60 px-4 py-2.5 backdrop-blur-xl">
@@ -468,26 +478,38 @@ function EmptyState({
   scopeSize: number;
 }) {
   return (
-    <div className="animate-slide-up overflow-hidden rounded-md border border-chrome-border bg-bg-soft/80 shadow-block">
-      <div className="flex items-center justify-between border-b border-chrome-border px-4 py-2 font-mono text-[10.5px] uppercase tracking-[0.2em] text-ink-dim">
-        <span>
-          <span className="text-prompt">◆</span> lumen · tty0
+    <div className="animate-slide-up relative overflow-hidden rounded-md terminal-frame bracket-frame">
+      <span className="bracket-corner" />
+      <div className="flex items-center justify-between border-b border-chrome-border bg-chrome/70 px-4 py-2 font-mono text-[10.5px] uppercase tracking-[0.22em] text-ink-dim">
+        <span className="flex items-center gap-2">
+          <span className="text-prompt drop-shadow-[0_0_6px_rgba(249,38,114,0.7)]">◆</span>
+          <span className="neon-text">lumen</span>
+          <span className="text-ink-faint">·</span>
+          <span>tty0</span>
         </span>
-        <span className="flex items-center gap-1.5 text-ink-faint normal-case tracking-normal">
-          <span className="h-1.5 w-1.5 rounded-full bg-ok animate-pulse shadow-[0_0_6px_currentColor]" />
-          <span className="text-ok">online</span>
+        <span className="flex items-center gap-3 text-ink-faint normal-case tracking-normal">
+          <span className="hud-chip"><span className="k">pipe</span><span className="v">rag-v4</span></span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-ok animate-pulse shadow-[0_0_6px_currentColor]" />
+            <span className="text-ok">online</span>
+          </span>
         </span>
       </div>
 
-      <pre className="overflow-x-auto px-4 pt-4 font-mono text-[10px] leading-[1.1] text-prompt drop-shadow-[0_0_8px_rgba(249,38,114,0.35)]">
-{String.raw` __   _   _  __  __ ___ _  _
-| |  | | | ||  \/  | __| \| |
-| |__| |_| || |\/| | _|| .  |
-|____|\___/ |_|  |_|___|_|\_|`}
+      <pre className="overflow-x-auto px-4 pt-4 font-mono text-[10px] leading-[1.1] text-prompt drop-shadow-[0_0_12px_rgba(249,38,114,0.6)] sm:text-[12px]">
+{String.raw`  _     _   _ __  __ _____ _  _
+ | |   | | | |  \/  | ____| \| |
+ | |   | | | | |\/| |  _| | .  |
+ | |___| |_| | |  | | |___| |\  |
+ |_____|\___/|_|  |_|_____|_| \_|`}
       </pre>
 
-      <div className="px-4 pb-1 pt-1 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
-        retrieval-augmented shell · build 0.2.1
+      <div className="px-4 pb-1 pt-1 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-faint">
+        <span className="glitch neon-text-green" data-text="retrieval-augmented shell">retrieval-augmented shell</span>
+        <span className="mx-2 text-ink-faint">·</span>
+        <span className="text-mk-blue">build 0.2.7</span>
+        <span className="mx-2 text-ink-faint">·</span>
+        <span className="text-mk-yellow">5 llm providers</span>
       </div>
 
       <div className="px-4 py-4 font-mono text-[12.5px] leading-relaxed text-ink">

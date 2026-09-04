@@ -24,6 +24,7 @@ import { AuthProvider } from "@/components/auth/auth-provider";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { reposApi, type Repo, type RepoPreview, type RepoStatus } from "@/lib/rag";
+import { MatrixRain } from "@/components/matrix-rain";
 
 const ACTIVE: Set<RepoStatus> = new Set([
   "pending",
@@ -127,14 +128,21 @@ function CodePlaygroundInner() {
 
   return (
     <div className="relative flex h-[calc(100vh-2.75rem)] flex-col warp-ambient">
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <MatrixRain opacity={0.14} speed={0.6} />
+      </div>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-50 mix-blend-overlay"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 warp-grid opacity-[0.35]"
+        className="pointer-events-none absolute inset-0 z-0 hacker-grid opacity-40"
       />
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <div className="scan-line" />
+      </div>
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 crt-vignette" />
 
       {/* toolbar */}
       <div className="relative z-10 border-b border-chrome-border bg-chrome/60 px-4 py-3 backdrop-blur-xl">
@@ -382,7 +390,12 @@ function BootLog() {
       <span className="text-ink">DEFINES · IMPORTS · CALLS · INHERITS</span>
     </>,
     <>
-      llm router <span className="text-mk-yellow">groq</span> → <span className="text-mk-purple">gemini</span> failover
+      llm router{" "}
+      <span className="text-mk-yellow">groq</span> ·{" "}
+      <span className="text-mk-purple">gemini</span> ·{" "}
+      <span className="text-mk-pink">cerebras</span> ·{" "}
+      <span className="text-mk-blue">openrouter</span> ·{" "}
+      <span className="text-mk-green">openai-compat</span>
     </>,
     <>ingest pipeline armed · awaiting target</>,
   ];
@@ -455,7 +468,7 @@ function SystemHud({ repos }: { repos: Repo[] }) {
     <div className="mx-auto mt-2 flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 border-t border-chrome-border/50 pt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
       <HudStat icon={<Radio className="h-3 w-3" />} label="link" value="ok" tone="ok" />
       <HudStat icon={<Database className="h-3 w-3" />} label="kuzu" value="online" tone="ok" />
-      <HudStat icon={<Cpu className="h-3 w-3" />} label="providers" value="groq/gemini" tone="mk-blue" />
+      <HudStat icon={<Cpu className="h-3 w-3" />} label="providers" value="5 online" tone="mk-blue" />
       <HudStat icon={<Terminal className="h-3 w-3" />} label="ready" value={ready} tone="ok" />
       <HudStat label="active" value={active} tone={active ? "warn" : "ink-dim"} />
       <HudStat label="chunks" value={chunks.toLocaleString()} tone="mk-yellow" />

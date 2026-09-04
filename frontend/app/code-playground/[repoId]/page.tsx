@@ -34,6 +34,7 @@ import {
   type SourceChunk,
 } from "@/lib/rag";
 import { postStream } from "@/lib/stream";
+import { MatrixRain } from "@/components/matrix-rain";
 import { AnswerBody } from "@/components/chat/answer-body";
 import { SkeletonSources } from "@/components/chat/skeleton-sources";
 
@@ -276,14 +277,21 @@ function CodeChatInner() {
 
   return (
     <div className="relative flex h-[calc(100vh-2.75rem)] flex-col warp-ambient">
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <MatrixRain opacity={0.14} speed={0.6} />
+      </div>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-40 mix-blend-overlay"
+        className="pointer-events-none absolute inset-0 z-0 bg-scanline opacity-50 mix-blend-overlay"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 warp-grid opacity-[0.35]"
+        className="pointer-events-none absolute inset-0 z-0 hacker-grid opacity-40"
       />
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <div className="scan-line" />
+      </div>
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 crt-vignette" />
 
       {/* header */}
       <div className="relative z-10 border-b border-chrome-border bg-chrome/60 px-4 py-2.5 backdrop-blur-xl">
@@ -461,7 +469,7 @@ function RepoStatusStrip({
         </span>
         <span className="hidden sm:inline">
           <Cpu className="mr-1 inline h-3 w-3 text-mk-blue" />
-          route <span className="text-mk-blue">groq/gemini</span>
+          route <span className="text-mk-blue">multi-provider · 5 llms</span>
         </span>
         <span>
           repo <span className="text-mk-pink">{repo.owner}/{repo.name}</span>

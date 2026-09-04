@@ -69,19 +69,20 @@ function layout(structure: GraphStructure) {
   });
 
   const positions = new Map<string, { x: number; y: number }>();
-  const colW = 190;
-  const rowH = 100;
-  const marginY = 40;
-  const maxCols = Math.max(1, ...layers.map((row) => row.length));
-  const totalWidth = maxCols * colW;
+  // Horizontal flow: layers advance in +x, siblings within a layer stack in +y.
+  const colW = 230;
+  const rowH = 72;
+  const marginX = 40;
+  const maxRows = Math.max(1, ...layers.map((row) => row.length));
+  const totalHeight = maxRows * rowH;
 
   layers.forEach((row, li) => {
-    const rowWidth = row.length * colW;
-    const offsetX = (totalWidth - rowWidth) / 2 + 60;
+    const colHeight = row.length * rowH;
+    const offsetY = (totalHeight - colHeight) / 2 + 40;
     row.forEach((id, ci) => {
       positions.set(id, {
-        x: offsetX + ci * colW,
-        y: marginY + li * rowH,
+        x: marginX + li * colW,
+        y: offsetY + ci * rowH,
       });
     });
   });
@@ -416,9 +417,10 @@ export function GraphVisualizer({
             {structure && !loading && !err && (
               <svg
                 viewBox={`0 0 ${width} ${height}`}
-                width="100%"
-                style={{ display: "block", maxWidth: "100%", height: "auto" }}
-                preserveAspectRatio="xMidYMin meet"
+                width={width}
+                height={height}
+                style={{ display: "block" }}
+                preserveAspectRatio="xMinYMid meet"
               >
                 <defs>
                   <marker
@@ -487,13 +489,14 @@ export function GraphVisualizer({
                   const s = positions.get(e.source);
                   const t = positions.get(e.target);
                   if (!s || !t) return null;
-                  const x1 = s.x + NODE_W / 2;
-                  const y1 = s.y + NODE_H;
-                  const x2 = t.x + NODE_W / 2;
-                  const y2 = t.y;
-                  const cy = (y1 + y2) / 2;
+                  // Right edge of source → left edge of target, horizontal flow
+                  const x1 = s.x + NODE_W;
+                  const y1 = s.y + NODE_H / 2;
+                  const x2 = t.x;
+                  const y2 = t.y + NODE_H / 2;
+                  const cx = (x1 + x2) / 2;
                   // Bezier curve for smoothness
-                  const d = `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`;
+                  const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
                   const traversed = traversedEdges.has(`${i}`);
                   const active = activeEdgeIdx.has(i);
                   const stroke = active

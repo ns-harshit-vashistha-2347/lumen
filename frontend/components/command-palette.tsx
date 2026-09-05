@@ -11,6 +11,7 @@ import {
   Search,
   FileText,
   Zap,
+  FlaskConical,
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -111,6 +112,18 @@ export function CommandPalette() {
         keywords: "repos github codebase",
         run: () => {
           router.push("/code-playground");
+          close();
+        },
+      },
+      {
+        id: "nav-evals",
+        label: "open eval suites",
+        hint: "/evals",
+        section: "nav",
+        icon: <FlaskConical className="h-3.5 w-3.5 text-mk-green" />,
+        keywords: "test benchmark quality regression",
+        run: () => {
+          router.push("/evals");
           close();
         },
       },

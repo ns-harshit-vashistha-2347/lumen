@@ -38,6 +38,7 @@ const TABS = [
   { href: "/chat", label: "chat" },
   { href: "/documents", label: "library" },
   { href: "/code-playground", label: "code" },
+  { href: "/evals", label: "evals" },
 ];
 
 export function AppChrome() {

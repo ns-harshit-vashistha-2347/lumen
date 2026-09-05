@@ -39,6 +39,7 @@ import { AnswerBody } from "@/components/chat/answer-body";
 import { SkeletonSources } from "@/components/chat/skeleton-sources";
 import { RepoFileViewer, type RepoCitation } from "@/components/chat/repo-file-viewer";
 import { RepoTour } from "@/components/chat/repo-tour";
+import { PipelineHealthChip } from "@/components/chat/pipeline-health-chip";
 
 const SAMPLES = [
   "where is the auth middleware defined?",
@@ -842,6 +843,9 @@ function SourcesBlock({
           <span className="text-ink">{sources.length}</span>
           <span className="text-ink-faint">·</span>
           <span className="text-mk-blue">click to open file at line</span>
+          <span className="ml-auto">
+            <PipelineHealthChip />
+          </span>
         </div>
         <ul className="divide-y divide-chrome-border/40">
           {sources.map((s, i) => {

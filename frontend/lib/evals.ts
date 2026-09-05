@@ -69,4 +69,19 @@ export const evalsApi = {
   startRun: (suiteId: string) => api.post<EvalRun>(`/evals/suites/${suiteId}/run`),
   listRuns: (suiteId: string) => api.get<EvalRun[]>(`/evals/suites/${suiteId}/runs`),
   getRun: (runId: string) => api.get<EvalRunDetail>(`/evals/runs/${runId}`),
+  latest: () =>
+    api.get<{
+      run: null | {
+        id: string;
+        suite_id: string;
+        suite_name: string;
+        pass_rate: number;
+        pass_count: number;
+        partial_count: number;
+        fail_count: number;
+        error_count: number;
+        total_cases: number;
+        finished_at: string | null;
+      };
+    }>("/evals/latest"),
 };

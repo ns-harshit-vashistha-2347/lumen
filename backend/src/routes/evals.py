@@ -197,6 +197,49 @@ async def list_runs(
     return rows
 
 
+@evals_router.get("/latest")
+async def latest_run_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the most recently COMPLETED run across every suite the user
+    owns, in a shape the chat/code bubbles can render as a trust chip.
+    Absent (`{"run": null}`) if no completed run exists yet — the FE
+    should just hide the chip in that case.
+
+    Kept intentionally cheap: one indexed join, no per-case detail.
+    """
+    row = (await db.execute(
+        select(EvalRun, EvalSuite)
+        .join(EvalSuite, EvalSuite.id == EvalRun.suite_id)
+        .where(
+            EvalSuite.user_id == current_user.id,
+            EvalRun.status == EvalRunStatus.COMPLETED,
+        )
+        .order_by(EvalRun.finished_at.desc().nullslast())
+        .limit(1)
+    )).first()
+    if not row:
+        return {"run": None}
+    run, suite = row
+    total = max(1, run.total_cases)
+    pass_rate = run.pass_count / total
+    return {
+        "run": {
+            "id": str(run.id),
+            "suite_id": str(suite.id),
+            "suite_name": suite.name,
+            "pass_rate": round(pass_rate, 4),
+            "pass_count": run.pass_count,
+            "partial_count": run.partial_count,
+            "fail_count": run.fail_count,
+            "error_count": run.error_count,
+            "total_cases": run.total_cases,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        }
+    }
+
+
 @evals_router.get("/runs/{run_id}", response_model=EvalRunDetailResponse)
 async def get_run(
     run_id: uuid.UUID,

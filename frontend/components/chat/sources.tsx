@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import type { SourceChunk } from "@/lib/rag";
 import { SourceViewer } from "./source-viewer";
 import { CitationHeatmap } from "./citation-heatmap";
+import { PipelineHealthChip } from "./pipeline-health-chip";
 
 function keyOf(s: SourceChunk): string {
   return (
@@ -64,7 +65,12 @@ export function Sources({ sources }: { sources: SourceChunk[] }) {
               <span className="text-mk-yellow">· filtered</span>
             )}
           </span>
-          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+          <span className="flex items-center gap-2">
+            {/* Trust cue — links to the last completed eval run so users
+                can see how the pipeline scored on the owner's benchmark. */}
+            <PipelineHealthChip />
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+          </span>
         </button>
 
         {open && (

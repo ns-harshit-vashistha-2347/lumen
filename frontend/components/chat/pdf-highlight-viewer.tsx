@@ -49,7 +49,6 @@ async function loadPdfJs(): Promise<PdfLibType> {
   // Worker: pdfjs ships a worker script; we point at the ESM build from the
   // same package so bundlers (webpack/turbopack) resolve it correctly.
   const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-  // @ts-expect-error — worker port typing varies across pdfjs minors
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   return pdfjs;
 }

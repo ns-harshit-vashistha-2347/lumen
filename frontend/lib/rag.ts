@@ -223,6 +223,14 @@ export const reposApi = {
       content: string;
       total_lines: number | null;
     }>(`/repos/${id}/file?path=${encodeURIComponent(path)}`),
+  tour: (id: string) =>
+    api.get<{
+      status: "ready" | "generating";
+      tour_markdown: string | null;
+      generated_at: string | null;
+    }>(`/repos/${id}/tour`),
+  regenerateTour: (id: string) =>
+    api.post<{ status: "queued" }>(`/repos/${id}/tour/regenerate`),
 };
 
 export const codeQueryApi = {

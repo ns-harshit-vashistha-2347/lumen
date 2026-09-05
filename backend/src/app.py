@@ -19,6 +19,7 @@ from src.routes.repos import repos_router
 from src.routes.code_query import code_query_router
 from src.routes.webhooks import webhook_router
 from src.routes.chat import chat_router
+from src.routes.evals import evals_router
 
 from src.core.fallback_middleware import LLMFallbackMiddleware
 
@@ -109,6 +110,7 @@ app.include_router(repos_router)
 app.include_router(code_query_router)
 app.include_router(webhook_router)
 app.include_router(chat_router)
+app.include_router(evals_router)
 
 
 @app.get("/health")

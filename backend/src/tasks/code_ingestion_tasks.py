@@ -231,6 +231,14 @@ def ingest_repo_task(self, repo_id: str) -> dict:
             error=None,
         )
         logger.info(f"[ingest_repo_task] done repo_id={repo_id} chunks={stored}")
+        # Fire the tour generator asynchronously — the ingest is already
+        # complete from the user's perspective; a tour that lands 20s later
+        # (or fails silently) never blocks their first query.
+        try:
+            from src.tasks.tour_task import generate_repo_tour_task
+            generate_repo_tour_task.delay(repo_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[ingest_repo_task] failed to enqueue tour: {exc}")
         return {"repo_id": repo_id, "status": "completed", "chunks": stored}
 
     except PermanentIngestError as exc:

@@ -68,6 +68,14 @@ class Repo(Base):
 
     webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Auto-generated markdown tour of the repo (see /repos/{id}/tour).
+    # Written asynchronously at the end of ingest; NULL until the tour
+    # task completes. Regeneratable via POST /repos/{id}/tour/regenerate.
+    tour_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tour_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

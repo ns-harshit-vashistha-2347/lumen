@@ -38,6 +38,7 @@ import { MatrixRain } from "@/components/matrix-rain";
 import { AnswerBody } from "@/components/chat/answer-body";
 import { SkeletonSources } from "@/components/chat/skeleton-sources";
 import { RepoFileViewer, type RepoCitation } from "@/components/chat/repo-file-viewer";
+import { RepoTour } from "@/components/chat/repo-tour";
 
 const SAMPLES = [
   "where is the auth middleware defined?",
@@ -367,6 +368,7 @@ function CodeChatInner() {
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-4xl space-y-4 px-4 py-6">
           {notReady && <NotReadyBanner status={repo.status} />}
+          {!notReady && <RepoTour repoId={repoId} ingested={true} />}
           {messages.length === 0 ? (
             <CodeEmpty
               onPick={(p) => submit(p)}

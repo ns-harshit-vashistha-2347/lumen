@@ -319,6 +319,47 @@ async def repo_file(
     }
 
 
+@repos_router.get("/{repo_id}/tour")
+async def get_repo_tour(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the cached "how to read this repo" markdown tour, if any.
+    Response `status`:
+      - "ready"       tour_markdown is present
+      - "generating"  tour hasn't landed yet (frontend can poll every few s)
+    """
+    result = await db.execute(
+        select(Repo).where(Repo.id == repo_id, Repo.user_id == current_user.id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+    return {
+        "status": "ready" if repo.tour_markdown else "generating",
+        "tour_markdown": repo.tour_markdown,
+        "generated_at": repo.tour_generated_at.isoformat() if repo.tour_generated_at else None,
+    }
+
+
+@repos_router.post("/{repo_id}/tour/regenerate")
+async def regenerate_repo_tour(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Repo).where(Repo.id == repo_id, Repo.user_id == current_user.id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+    from src.tasks.tour_task import generate_repo_tour_task
+    generate_repo_tour_task.delay(str(repo_id))
+    return {"status": "queued"}
+
+
 _LANG_BY_EXT = {
     ".py": "python", ".js": "javascript", ".jsx": "javascript",
     ".ts": "typescript", ".tsx": "tsx", ".go": "go", ".java": "java",

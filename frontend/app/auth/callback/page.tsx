@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { tokenStore } from "@/lib/token-store";
 
-export default function OAuthCallbackPage() {
+// Next 14 requires anything reading useSearchParams() during a static
+// prerender to live inside a Suspense boundary — otherwise the whole
+// page bails out of prerender and Vercel fails the build. The page is
+// dynamic in practice (we read a one-shot ?claim=), but the outer
+// component gives the prerender the boundary it needs.
+
+function OAuthCallbackInner() {
   const router = useRouter();
   const search = useSearchParams();
 
@@ -45,5 +51,22 @@ export default function OAuthCallbackPage() {
         <p className="text-sm text-ink-dim">Signing you in…</p>
       </div>
     </div>
+  );
+}
+
+export default function OAuthCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-prompt border-t-transparent" />
+            <p className="text-sm text-ink-dim">Signing you in…</p>
+          </div>
+        </div>
+      }
+    >
+      <OAuthCallbackInner />
+    </Suspense>
   );
 }

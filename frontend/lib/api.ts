@@ -4,10 +4,17 @@ import { tokenStore } from "./token-store";
 export class ApiError extends Error {
   status: number;
   detail: string;
-  constructor(status: number, detail: string) {
+  // Machine-readable error code from the API envelope
+  //   { error: { code, message, details } }
+  // Optional so pre-envelope callers keep working.
+  code?: string;
+  details?: unknown;
+  constructor(status: number, detail: string, code?: string, details?: unknown) {
     super(detail);
     this.status = status;
     this.detail = detail;
+    this.code = code;
+    this.details = details;
   }
 }
 
@@ -89,30 +96,52 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
+    let details: unknown;
     try {
       const err = await res.json();
-      const raw = err.detail ?? err.message ?? detail;
-      // FastAPI 422 returns `detail` as an array of {loc, msg, type};
-      // flatten it so callers don't render "[object Object]".
-      if (Array.isArray(raw)) {
-        detail = raw
-          .map((e: { msg?: string; loc?: (string | number)[] }) => {
-            if (e && typeof e === "object" && "msg" in e) {
+      // Preferred: new envelope { error: { code, message, details } }
+      if (err && typeof err === "object" && err.error && typeof err.error === "object") {
+        code = err.error.code;
+        details = err.error.details;
+        if (typeof err.error.message === "string") detail = err.error.message;
+        // Validation issues live under details.issues — flatten to a
+        // human-readable string for anywhere still consuming `.detail`.
+        const issues =
+          details && typeof details === "object" && Array.isArray((details as { issues?: unknown }).issues)
+            ? ((details as { issues: { msg?: string; loc?: (string | number)[] }[] }).issues)
+            : null;
+        if (issues) {
+          detail = issues
+            .map((e) => {
               const loc = Array.isArray(e.loc) ? e.loc.slice(1).join(".") : "";
-              return loc ? `${loc}: ${e.msg}` : String(e.msg);
-            }
-            return typeof e === "string" ? e : JSON.stringify(e);
-          })
-          .join("; ");
-      } else if (typeof raw === "string") {
-        detail = raw;
-      } else if (raw != null) {
-        detail = JSON.stringify(raw);
+              return loc ? `${loc}: ${e.msg ?? ""}` : String(e.msg ?? "");
+            })
+            .join("; ");
+        }
+      } else {
+        // Legacy FastAPI shape: { detail: "..." } or { detail: [{msg,loc}, ...] }
+        const raw = err?.detail ?? err?.message ?? detail;
+        if (Array.isArray(raw)) {
+          detail = raw
+            .map((e: { msg?: string; loc?: (string | number)[] }) => {
+              if (e && typeof e === "object" && "msg" in e) {
+                const loc = Array.isArray(e.loc) ? e.loc.slice(1).join(".") : "";
+                return loc ? `${loc}: ${e.msg}` : String(e.msg);
+              }
+              return typeof e === "string" ? e : JSON.stringify(e);
+            })
+            .join("; ");
+        } else if (typeof raw === "string") {
+          detail = raw;
+        } else if (raw != null) {
+          detail = JSON.stringify(raw);
+        }
       }
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, code, details);
   }
 
   if (res.status === 204) return undefined as T;

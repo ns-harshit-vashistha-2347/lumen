@@ -139,13 +139,49 @@ async def run_query_stream(
         )
         history = await load_history(db, session.id)
 
+    # Serve the cached full response if we have one AND there's no history —
+    # same rule as /query. Note we only skip the LLM call; we still stream
+    # the cached answer as a single chunk so the client wire format is
+    # unchanged.
+    scope_ids = [str(d) for d in payload.document_ids] if payload.document_ids else None
+    if not history:
+        cached = get_cached_query(
+            payload.query, payload.top_k, str(current_user.id), scope_ids
+        )
+        if cached is not None:
+            logger.info(f"[/query/stream] cache hit user_id={current_user.id}")
+
+            async def cached_stream():
+                import json as _json
+                header = {
+                    "type": "meta",
+                    "session_id": str(session.id) if session else None,
+                    "trace_id": None,
+                    "sources": cached.get("sources", []),
+                }
+                yield _json.dumps(header) + "\n"
+                yield cached.get("answer", "")
+                if session is not None:
+                    try:
+                        await append_turn(
+                            db, session,
+                            user_content=payload.query,
+                            assistant_content=cached.get("answer", ""),
+                            payload={"sources": cached.get("sources", []), "cached": True},
+                            trace_id=None,
+                        )
+                    except Exception as exc:
+                        logger.exception(f"[/query/stream] failed to persist cached turn: {exc}")
+
+            return StreamingResponse(cached_stream(), media_type="text/plain")
+
     trace_id = new_trace_id()
     try:
         partial = await astream_with_trace(retrieval_graph, {
             "query": payload.query,
             "top_k": payload.top_k,
             "user_id": str(current_user.id),
-            "document_ids": [str(d) for d in payload.document_ids] if payload.document_ids else None,
+            "document_ids": scope_ids,
             "chat_history": history,
         }, trace_id)
     except Exception as exc:
@@ -161,55 +197,67 @@ async def run_query_stream(
     messages.extend(_history_messages(history))
     messages.append(HumanMessage(content=f"Context:\n\n{context}\n\nQuestion: {payload.query}"))
 
+    source_payload = [
+        {
+            "content": (
+                c.metadata.get("original_content")
+                or c.metadata.get("raw_content", c.content)
+            ),
+            "metadata": c.metadata,
+            "score": c.score,
+            "source": c.metadata.get("source"),
+            "page": c.metadata.get("page_number") or c.metadata.get("page"),
+            "path": c.metadata.get("path"),
+            "start_line": c.metadata.get("start_line"),
+            "end_line": c.metadata.get("end_line"),
+            "symbol_name": c.metadata.get("symbol_name"),
+        }
+        for c in chunks
+    ]
+
     async def token_stream():
         import json
-        # Full sources in the meta header so the client can render the same
-        # cited-passage UI that the non-streaming endpoint returns — the
-        # bytes are already loaded and would need to be resent otherwise.
         header = {
             "type": "meta",
             "session_id": str(session.id) if session else None,
             "trace_id": trace_id,
-            "sources": [
-                {
-                    "content": (
-                        c.metadata.get("original_content")
-                        or c.metadata.get("raw_content", c.content)
-                    ),
-                    "metadata": c.metadata,
-                    "score": c.score,
-                    # keep the light preview fields so the streaming skeleton
-                    # can still render before the answer lands.
-                    "source": c.metadata.get("source"),
-                    "page": c.metadata.get("page_number") or c.metadata.get("page"),
-                    "path": c.metadata.get("path"),
-                    "start_line": c.metadata.get("start_line"),
-                    "end_line": c.metadata.get("end_line"),
-                    "symbol_name": c.metadata.get("symbol_name"),
-                }
-                for c in chunks
-            ],
+            "sources": source_payload,
         }
         yield json.dumps(header) + "\n"
         collected: list[str] = []
+        stream_ok = True
         try:
             async for chunk in llm.astream(messages):
                 if chunk.content:
                     collected.append(chunk.content)
                     yield chunk.content
         except Exception as exc:
+            stream_ok = False
             logger.exception(f"[/query/stream] llm stream failed: {exc}")
             yield "\n[error: generation interrupted]"
+        answer_text = "".join(collected)
         if session is not None and collected:
             try:
                 await append_turn(
                     db, session,
                     user_content=payload.query,
-                    assistant_content="".join(collected),
-                    payload={"streamed": True},
+                    assistant_content=answer_text,
+                    payload={"streamed": True, "sources": source_payload},
                     trace_id=trace_id,
                 )
             except Exception as exc:
                 logger.exception(f"[/query/stream] failed to persist turn: {exc}")
+        # Populate the same cache /query uses so a repeat streaming call
+        # for an unchanged (user, scope, query) with no history skips the
+        # LLM entirely on the next request.
+        if stream_ok and answer_text and not history:
+            try:
+                set_cached_query(
+                    payload.query, payload.top_k, str(current_user.id),
+                    {"answer": answer_text, "sources": source_payload},
+                    document_ids=scope_ids,
+                )
+            except Exception as exc:
+                logger.warning(f"[/query/stream] failed to warm cache: {exc}")
 
     return StreamingResponse(token_stream(), media_type="text/plain")

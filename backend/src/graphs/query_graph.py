@@ -107,7 +107,24 @@ def prepare_node(state: dict) -> dict:
         pre = _fast_classify(state.get("query", ""))
         if pre is not None:
             out["complexity"] = pre
+            # Simple queries skip rewrite+decompose entirely — seed the
+            # fields those nodes would have produced so retrieval works.
+            if pre == "simple":
+                q = state.get("query", "")
+                out["primary_query"] = q
+                out["queries"] = [q]
+                out["sub_questions"] = [q]
+                out["is_multihop"] = False
     return out
+
+
+def _post_prepare_route(state: dict) -> list[str]:
+    """Simple queries skip rewrite+decompose (saves 1-2 LLM roundtrips) and
+    fan straight into both retrievers. Complex still funnels through
+    rewrite → decompose first."""
+    if state.get("complexity") == "simple":
+        return ["dense", "bm25"]
+    return ["rewrite"]
 
 
 
@@ -131,7 +148,11 @@ def build_query_graph():
     graph.add_node("finalize", finalize_node)
 
     graph.add_edge(START, "prepare")
-    graph.add_edge("prepare", "rewrite")
+    graph.add_conditional_edges(
+        "prepare",
+        _post_prepare_route,
+        ["dense", "bm25", "rewrite"],
+    )
     graph.add_edge("rewrite", "decompose")
     graph.add_edge("decompose", "dense")
     graph.add_edge("decompose", "bm25")
@@ -146,7 +167,7 @@ def build_query_graph():
         "classify",
         lambda state: state.get("complexity", "complex"),
         {
-            "simple": "generation",     
+            "simple": "generation",
             "complex": "compression",
         },
     )
@@ -210,7 +231,11 @@ def build_retrieval_graph():
     graph.add_node("ready", _ready_for_generation)
 
     graph.add_edge(START, "prepare")
-    graph.add_edge("prepare", "rewrite")
+    graph.add_conditional_edges(
+        "prepare",
+        _post_prepare_route,
+        ["dense", "bm25", "rewrite"],
+    )
     graph.add_edge("rewrite", "decompose")
     graph.add_edge("decompose", "dense")
     graph.add_edge("decompose", "bm25")

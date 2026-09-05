@@ -1,12 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { X, Loader2, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 import type { SourceChunk } from "@/lib/rag";
 import { docsApi, type DocumentChunk } from "@/lib/rag";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { MatrixRain } from "@/components/matrix-rain";
+
+// pdfjs is ~1MB gzipped — dynamic import so the chat bundle stays lean.
+const PdfHighlightViewer = dynamic(
+  () => import("./pdf-highlight-viewer").then((m) => m.PdfHighlightViewer),
+  { ssr: false, loading: () => null }
+);
 
 interface Props {
   open: boolean;
@@ -177,10 +184,6 @@ export function SourceViewer({ open, onClose, activeSource, allSources }: Props)
 
   if (!open) return null;
 
-  const pdfSrc = pdfBlobUrl
-    ? `${pdfBlobUrl}#page=${selected?.page || 1}&zoom=page-width`
-    : null;
-
   const stepChunk = (dir: 1 | -1) => {
     if (!chunks || chunks.length === 0) return;
     const idx = selected ? chunks.findIndex((c) => c.id === selected.id) : -1;
@@ -273,12 +276,15 @@ export function SourceViewer({ open, onClose, activeSource, allSources }: Props)
               </div>
             )}
             {!loading && !err && PDF_LIKE.has(ext) && (
-              pdfSrc ? (
-                <iframe
-                  key={pdfSrc}
-                  src={pdfSrc}
-                  title={filename}
-                  className="h-full w-full border-0 bg-white"
+              pdfBlobUrl && chunks ? (
+                <PdfHighlightViewer
+                  pdfUrl={pdfBlobUrl}
+                  active={selected}
+                  others={chunks.filter((c) => otherChunkIds.has(c.id))}
+                  onSelectChunkId={(id) => {
+                    const hit = chunks.find((c) => c.id === id);
+                    if (hit) setSelected(hit);
+                  }}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center font-mono text-[11px] text-ink-dim">
@@ -441,18 +447,71 @@ function TextRenderer({
                   </span>
                 )}
               </div>
-              <p
-                className={cn(
-                  "whitespace-pre-wrap break-words",
-                  isActive ? "text-ink" : "text-ink-muted"
-                )}
-              >
-                {c.content}
-              </p>
+              <NumberedContent
+                text={c.content}
+                startLine={c.start_line ?? null}
+                endLine={c.end_line ?? null}
+                muted={!isActive}
+                accent={isActive ? "active" : isOther ? "other" : "none"}
+              />
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+/** Render a chunk's text with line numbers. When start_line/end_line are
+ * present in metadata, paint those specific lines with the active or
+ * other-cited color band so the reader can see the exact passage inside
+ * a larger chunk body. */
+function NumberedContent({
+  text,
+  startLine,
+  endLine,
+  muted,
+  accent,
+}: {
+  text: string;
+  startLine: number | null;
+  endLine: number | null;
+  muted: boolean;
+  accent: "active" | "other" | "none";
+}) {
+  const lines = (text || "").split("\n");
+  const hasRange = startLine != null && endLine != null && endLine >= startLine;
+  const baseLine = startLine ?? 1;
+  return (
+    <pre
+      className={cn(
+        "whitespace-pre-wrap break-words rounded bg-black/10 p-2 font-mono text-[12px] leading-[1.55]",
+        muted ? "text-ink-muted" : "text-ink"
+      )}
+    >
+      {lines.map((raw, idx) => {
+        const lineNo = baseLine + idx;
+        const inRange =
+          hasRange && lineNo >= (startLine as number) && lineNo <= (endLine as number);
+        const bandClass = inRange
+          ? accent === "active"
+            ? "bg-prompt/25 border-l-2 border-prompt"
+            : accent === "other"
+            ? "bg-mk-yellow/20 border-l-2 border-mk-yellow"
+            : ""
+          : "";
+        return (
+          <div
+            key={idx}
+            className={cn("flex gap-3 rounded px-1", bandClass)}
+          >
+            <span className="w-8 shrink-0 select-none text-right text-ink-faint">
+              {lineNo}
+            </span>
+            <span className="min-w-0 whitespace-pre-wrap break-words">{raw || " "}</span>
+          </div>
+        );
+      })}
+    </pre>
   );
 }

@@ -8,7 +8,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { MessageBubble, type ChatMessage } from "@/components/chat/message";
 import { ScopeBar } from "@/components/chat/scope-bar";
-import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
+import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer.lazy";
 import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { MatrixRain } from "@/components/matrix-rain";
 import { useRouter } from "next/navigation";
@@ -16,20 +16,11 @@ import { ApiError } from "@/lib/api";
 import { useScope } from "@/lib/scope-store";
 import { chatSessionsApi } from "@/lib/chat-history";
 import { postStream } from "@/lib/stream";
-
-const SAMPLES = [
-  "summarize the key points across every document in scope",
-  "what are the main risks mentioned?",
-  "list every deadline referenced with its date",
-  "compare the recommendations in my two most recent uploads",
-];
-
-const SLASH: { cmd: string; desc: string }[] = [
-  { cmd: "/help", desc: "show all commands" },
-  { cmd: "/clear", desc: "wipe this conversation" },
-  { cmd: "/scope", desc: "open library to select documents" },
-  { cmd: "/summarize", desc: "summarise every doc in scope" },
-];
+import {
+  CHAT_SAMPLES as SAMPLES,
+  CHAT_SLASH as SLASH,
+  parseSlash,
+} from "@/components/chat/slash-commands";
 
 function ChatInner() {
   const [scope] = useScope();
@@ -77,11 +68,14 @@ function ChatInner() {
   }, []);
 
   useEffect(() => {
+    // While a token stream is landing, `messages` re-renders per chunk;
+    // "smooth" animates on every tick and thrashes. Use auto during
+    // sending, smooth only after the answer settles.
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
+      behavior: sending ? "auto" : "smooth",
     });
-  }, [messages]);
+  }, [messages, sending]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -101,37 +95,31 @@ function ChatInner() {
   }
 
   function handleSlash(text: string): boolean {
-    if (!text.startsWith("/")) return false;
-    const [cmd, ...rest] = text.split(/\s+/);
-    if (cmd === "/help") {
-      pushSystem(
-        "**available commands**\n\n" +
-          SLASH.map((s) => `- \`${s.cmd}\` — ${s.desc}`).join("\n")
-      );
-      setInput("");
-      return true;
+    const outcome = parseSlash(text);
+    if (outcome.kind === "not-slash") return false;
+    switch (outcome.kind) {
+      case "help":
+        pushSystem(
+          "**available commands**\n\n" +
+            SLASH.map((s) => `- \`${s.cmd}\` — ${s.desc}`).join("\n")
+        );
+        break;
+      case "clear":
+        setMessages([]);
+        setSessionId(null);
+        setLastTraceId(null);
+        break;
+      case "scope":
+        router.push("/documents");
+        break;
+      case "run":
+        setInput("");
+        submit(outcome.prompt);
+        return true;
+      case "unknown":
+        pushSystem(`unknown command: \`${outcome.cmd}\` · try \`/help\``);
+        break;
     }
-    if (cmd === "/clear") {
-      setMessages([]);
-      setSessionId(null);
-      setLastTraceId(null);
-      setInput("");
-      return true;
-    }
-    if (cmd === "/scope") {
-      router.push("/documents");
-      setInput("");
-      return true;
-    }
-    if (cmd === "/summarize") {
-      setInput("");
-      submit("summarise every document currently in scope and highlight the key themes");
-      return true;
-    }
-    void rest;
-    // Any other slash-prefixed input is an unknown command — swallow it so
-    // the user doesn't accidentally send "/foo" as a real query.
-    pushSystem(`unknown command: \`${cmd}\` · try \`/help\``);
     setInput("");
     return true;
   }

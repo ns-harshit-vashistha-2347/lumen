@@ -20,7 +20,7 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
-import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer";
+import { GraphButton, GraphVisualizer } from "@/components/graph-visualizer.lazy";
 import { KbBrowser, KbButton } from "@/components/kb-browser";
 import { SessionSidebar, SidebarToggle } from "@/components/session-sidebar";
 import { ApiError } from "@/lib/api";
@@ -37,6 +37,7 @@ import { postStream } from "@/lib/stream";
 import { MatrixRain } from "@/components/matrix-rain";
 import { AnswerBody } from "@/components/chat/answer-body";
 import { SkeletonSources } from "@/components/chat/skeleton-sources";
+import { RepoFileViewer, type RepoCitation } from "@/components/chat/repo-file-viewer";
 
 const SAMPLES = [
   "where is the auth middleware defined?",
@@ -373,7 +374,7 @@ function CodeChatInner() {
               repo={repo}
             />
           ) : (
-            messages.map((m) => <CodeBubble key={m.id} message={m} />)
+            messages.map((m) => <CodeBubble key={m.id} message={m} repoId={repoId} />)
           )}
         </div>
       </div>
@@ -637,7 +638,7 @@ function CodeBootLog({ repo }: { repo: Repo }) {
 
 // ------- assistant / user bubble ------------------------------------------
 
-function CodeBubble({ message }: { message: CodeMessage }) {
+function CodeBubble({ message, repoId }: { message: CodeMessage; repoId: string }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
 
@@ -739,7 +740,7 @@ function CodeBubble({ message }: { message: CodeMessage }) {
           <GraphHitsBlock hits={message.graph_hits} />
         )}
         {!isUser && !message.streaming && !message.loading && !!message.sources?.length && (
-          <SourcesBlock sources={message.sources} />
+          <SourcesBlock sources={message.sources} repoId={repoId} />
         )}
       </div>
     </article>
@@ -807,53 +808,94 @@ function GraphHitsBlock({ hits }: { hits: GraphHit[] }) {
   );
 }
 
-function SourcesBlock({ sources }: { sources: CodeSourceChunk[] }) {
+function SourcesBlock({
+  sources,
+  repoId,
+}: {
+  sources: CodeSourceChunk[];
+  repoId: string;
+}) {
   const [open, setOpen] = useState<number | null>(null);
+  const [viewerIdx, setViewerIdx] = useState<number | null>(null);
+
+  // Convert every source to a RepoCitation so the viewer can highlight
+  // other citations in the same file yellow while the clicked one is pink.
+  const citations: RepoCitation[] = sources.map((s, i) => ({
+    id: `${s.path}#${s.start_line ?? 0}-${s.end_line ?? 0}#${i}`,
+    path: s.path,
+    symbol_name: s.symbol_name || null,
+    symbol_kind: s.symbol_kind || null,
+    start_line: s.start_line ?? null,
+    end_line: s.end_line ?? null,
+    content: s.content,
+  }));
+
   return (
-    <div className="mt-3 overflow-hidden rounded border border-chrome-border/60 bg-bg/60">
-      <div className="flex items-center gap-2 border-b border-chrome-border/60 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim">
-        <FileCode className="h-3 w-3 text-mk-blue" />
-        <span>sources</span>
-        <span className="text-ink-faint">·</span>
-        <span className="text-ink">{sources.length}</span>
+    <>
+      <div className="mt-3 overflow-hidden rounded border border-chrome-border/60 bg-bg/60">
+        <div className="flex items-center gap-2 border-b border-chrome-border/60 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim">
+          <FileCode className="h-3 w-3 text-mk-blue" />
+          <span>sources</span>
+          <span className="text-ink-faint">·</span>
+          <span className="text-ink">{sources.length}</span>
+          <span className="text-ink-faint">·</span>
+          <span className="text-mk-blue">click to open file at line</span>
+        </div>
+        <ul className="divide-y divide-chrome-border/40">
+          {sources.map((s, i) => {
+            const isOpen = open === i;
+            return (
+              <li key={i} className="font-mono text-[11.5px]">
+                <div className="flex w-full flex-wrap items-center gap-2 px-2.5 py-1.5">
+                  <button
+                    onClick={() => setOpen(isOpen ? null : i)}
+                    className="flex flex-1 flex-wrap items-center gap-2 text-left hover:text-mk-pink"
+                  >
+                    <span className="text-mk-green">[{i + 1}]</span>
+                    {s.symbol_name && (
+                      <span className="text-mk-pink">{s.symbol_name}</span>
+                    )}
+                    {s.symbol_kind && (
+                      <span className="text-[10px] text-ink-faint">({s.symbol_kind})</span>
+                    )}
+                    <span className="text-ink-dim">{s.path}</span>
+                    {s.start_line && (
+                      <span className="text-ink-faint">
+                        :{s.start_line}
+                        {s.end_line && s.end_line !== s.start_line && `-${s.end_line}`}
+                      </span>
+                    )}
+                    <span className="ml-auto text-[10px] text-ink-faint">
+                      score {s.score.toFixed(2)}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setViewerIdx(i)}
+                    className="rounded border border-chrome-border bg-bg-raised px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.16em] text-mk-blue transition hover:border-mk-blue/60 hover:bg-mk-blue/[0.1]"
+                    title="open file with this range highlighted"
+                  >
+                    open
+                  </button>
+                </div>
+                {isOpen && (
+                  <pre className="max-h-72 overflow-auto border-t border-chrome-border/40 bg-bg px-3 py-2 text-[11.5px] leading-relaxed text-ink">
+                    {s.content}
+                  </pre>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </div>
-      <ul className="divide-y divide-chrome-border/40">
-        {sources.map((s, i) => {
-          const isOpen = open === i;
-          return (
-            <li key={i} className="font-mono text-[11.5px]">
-              <button
-                onClick={() => setOpen(isOpen ? null : i)}
-                className="flex w-full flex-wrap items-center gap-2 px-2.5 py-1.5 text-left hover:bg-chrome-hover/40"
-              >
-                <span className="text-mk-green">[{i + 1}]</span>
-                {s.symbol_name && (
-                  <span className="text-mk-pink">{s.symbol_name}</span>
-                )}
-                {s.symbol_kind && (
-                  <span className="text-[10px] text-ink-faint">({s.symbol_kind})</span>
-                )}
-                <span className="text-ink-dim">{s.path}</span>
-                {s.start_line && (
-                  <span className="text-ink-faint">
-                    :{s.start_line}
-                    {s.end_line && s.end_line !== s.start_line && `-${s.end_line}`}
-                  </span>
-                )}
-                <span className="ml-auto text-[10px] text-ink-faint">
-                  score {s.score.toFixed(2)}
-                </span>
-              </button>
-              {isOpen && (
-                <pre className="max-h-72 overflow-auto border-t border-chrome-border/40 bg-bg px-3 py-2 text-[11.5px] leading-relaxed text-ink">
-                  {s.content}
-                </pre>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+
+      <RepoFileViewer
+        open={viewerIdx !== null}
+        onClose={() => setViewerIdx(null)}
+        repoId={repoId}
+        active={viewerIdx !== null ? citations[viewerIdx] : null}
+        all={citations}
+      />
+    </>
   );
 }
 

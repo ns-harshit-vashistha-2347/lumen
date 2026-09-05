@@ -87,8 +87,27 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     token = result.scalar_one_or_none()
 
-    if not token or token.revoked:
+    if not token:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # Reuse detection: an already-revoked token being presented again is a
+    # strong signal it was stolen (the legitimate holder rotated, and now
+    # someone is replaying the pre-rotation copy). Nuke every refresh token
+    # for this user so the attacker AND the victim are both logged out.
+    if token.revoked:
+        from sqlalchemy import update as _update
+        await db.execute(
+            _update(RefreshToken)
+            .where(RefreshToken.user_id == token.user_id, RefreshToken.revoked.is_(False))
+            .values(revoked=True)
+        )
+        await db.commit()
+        logger.warning(
+            f"[auth] refresh token reuse detected for user_id={token.user_id}; "
+            f"revoked all outstanding tokens"
+        )
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     if token.expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Refresh token expired")
 
@@ -223,10 +242,59 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
 
     tokens = await _issue_token_pair(user, db)
 
-    redirect_target = (
-        f"{settings.FRONTEND_URL}/auth/callback"
-        f"#access_token={tokens.access_token}&refresh_token={tokens.refresh_token}"
-    )
+    # Don't ship real tokens in the redirect URL. Even in a fragment they
+    # land in browser history and any browser extension can read them.
+    # Mint a short-lived (60s) single-use claim id, stash the token pair
+    # under it in Redis, and hand ONLY the claim id to the FE. The FE
+    # exchanges it for the pair over an authenticated JSON POST that never
+    # traverses history/logs. Similar shape to the "auth code" hop in
+    # regular OAuth flows.
+    claim = secrets.token_urlsafe(32)
+    try:
+        from src.core.cache import get_redis_client
+        get_redis_client().set(
+            _oauth_claim_key(claim),
+            f"{tokens.access_token}\x1e{tokens.refresh_token}",
+            ex=60,
+        )
+    except Exception as exc:  # noqa: BLE001 — Redis outage must not brick login
+        logger.exception(f"[auth] failed to persist oauth claim: {exc}")
+        raise HTTPException(status_code=503, detail="Auth service temporarily unavailable")
+
+    redirect_target = f"{settings.FRONTEND_URL}/auth/callback?claim={claim}"
     response = RedirectResponse(redirect_target)
     response.delete_cookie(OAUTH_STATE_COOKIE)
     return response
+
+
+def _oauth_claim_key(claim: str) -> str:
+    return f"oauth_claim:{claim}"
+
+
+@auth_router.post("/oauth/exchange", response_model=TokenPair)
+@limiter.limit("30/minute")
+async def oauth_exchange(request: Request, payload: dict):
+    """Exchange a one-shot claim id from the OAuth redirect for the real
+    token pair. The claim is deleted on first read so a replay (from a
+    leaked history entry, referrer log, or extension) fails."""
+    claim = (payload or {}).get("claim")
+    if not isinstance(claim, str) or not claim:
+        raise HTTPException(status_code=400, detail="Missing claim")
+    try:
+        from src.core.cache import get_redis_client
+        client = get_redis_client()
+        raw = client.get(_oauth_claim_key(claim))
+        if raw is None:
+            raise HTTPException(status_code=404, detail="Claim expired or already used")
+        # Single-use: burn the key BEFORE handing tokens back.
+        client.delete(_oauth_claim_key(claim))
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"[auth] oauth claim lookup failed: {exc}")
+        raise HTTPException(status_code=503, detail="Auth service temporarily unavailable")
+    try:
+        access, refresh = raw.split("\x1e", 1)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Claim payload corrupt")
+    return TokenPair(access_token=access, refresh_token=refresh)

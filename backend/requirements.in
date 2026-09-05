@@ -54,3 +54,8 @@ tree-sitter-language-pack
 cryptography
 
 kuzu
+
+# Test-time only. Kept in requirements.in for a single install step in CI;
+# split into a requirements-dev.in later if you need a slimmer prod image.
+pytest
+pytest-asyncio

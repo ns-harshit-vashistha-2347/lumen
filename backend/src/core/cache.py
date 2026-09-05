@@ -89,6 +89,9 @@ def set_cached_query(
     ttl: int = 3600,
     document_ids: list[str] | None = None,
 ) -> None:
+    # TypeError/ValueError caught alongside RedisError because json.dumps on
+    # a non-serializable value (e.g. datetime, uuid) would otherwise 500 the
+    # caller instead of degrading to "no cache write".
     try:
         get_redis_client().set(
             query_cache_key(query, top_k, user_id, document_ids),
@@ -119,7 +122,8 @@ def get_cached_llm_response(task: str, model: str, prompt: str) -> str | None:
     except redis.RedisError as exc:
         logger.warning(f"llm cache read failed: {exc}")
         return None
-    return raw if isinstance(raw, str) else None
+    # decode_responses=True → get() returns str | None already.
+    return raw
 
 
 def set_cached_llm_response(
@@ -202,9 +206,40 @@ def _embedding_key(model_name: str, text: str) -> str:
     return f"emb:q:{digest}"
 
 
+# In-process LRU in front of Redis. A hot query (e.g. a common sample or a
+# retried request) becomes a dict lookup instead of a Redis round-trip
+# (~0.5-1ms). Bounded so a bursty workload can't blow RAM.
+from collections import OrderedDict
+import threading
+
+_EMB_LRU_MAX = 2048
+_EMB_LRU: "OrderedDict[str, list[float]]" = OrderedDict()
+_EMB_LRU_LOCK = threading.Lock()
+
+
+def _lru_get(key: str) -> list[float] | None:
+    with _EMB_LRU_LOCK:
+        v = _EMB_LRU.get(key)
+        if v is not None:
+            _EMB_LRU.move_to_end(key)
+        return v
+
+
+def _lru_put(key: str, vec: list[float]) -> None:
+    with _EMB_LRU_LOCK:
+        _EMB_LRU[key] = vec
+        _EMB_LRU.move_to_end(key)
+        while len(_EMB_LRU) > _EMB_LRU_MAX:
+            _EMB_LRU.popitem(last=False)
+
+
 def get_cached_embedding(model_name: str, text: str) -> list[float] | None:
+    key = _embedding_key(model_name, text)
+    hit = _lru_get(key)
+    if hit is not None:
+        return hit
     try:
-        raw = get_redis_client().get(_embedding_key(model_name, text))
+        raw = get_redis_client().get(key)
     except redis.RedisError as exc:
         logger.warning(f"embedding cache read failed: {exc}")
         return None
@@ -213,6 +248,7 @@ def get_cached_embedding(model_name: str, text: str) -> list[float] | None:
     try:
         vec = json.loads(raw)
         if isinstance(vec, list):
+            _lru_put(key, vec)
             return vec
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning(f"embedding cache decode failed: {exc}")
@@ -220,9 +256,9 @@ def get_cached_embedding(model_name: str, text: str) -> list[float] | None:
 
 
 def set_cached_embedding(model_name: str, text: str, vector: list[float], ttl: int = 86400) -> None:
+    key = _embedding_key(model_name, text)
+    _lru_put(key, vector)
     try:
-        get_redis_client().set(
-            _embedding_key(model_name, text), json.dumps(vector), ex=ttl
-        )
+        get_redis_client().set(key, json.dumps(vector), ex=ttl)
     except (redis.RedisError, TypeError, ValueError) as exc:
         logger.warning(f"embedding cache write failed: {exc}")

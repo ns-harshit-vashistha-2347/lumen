@@ -4,6 +4,14 @@ from src.core.llm import get_llm
 from src.core.logging import get_logger
 from src.core.prompt_guard import sanitize_context_text
 
+
+# Prior turns are stored as-is in Postgres; on replay they get fed straight
+# to the LLM. If a previous *assistant* answer included quoted user-controlled
+# text (e.g. echoing a document snippet that carried "ignore prior
+# instructions"), that would re-inject on the next turn. Cap message length
+# too so a huge assistant answer can't crowd out the current question.
+_HISTORY_MSG_MAX_CHARS = 4000
+
 logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """You are a precise assistant answering questions using only the provided context.
@@ -30,19 +38,6 @@ SYSTEM_PROMPT = """You are a precise assistant answering questions using only th
 _MAX_CONTEXT_CHUNK_CHARS = 4000
 # How many prior turns (user+assistant pair each) we include as chat history.
 _HISTORY_MAX_TURNS = 6
-
-
-def _expand_with_neighbors(chunks, collection, window: int = 1):
-    expanded = []
-    for chunk in chunks:
-        ids_to_fetch = [chunk.id]
-        cid = chunk.metadata.get("prev_chunk_id")
-        for _ in range(window):
-            if cid:
-                ids_to_fetch.insert(0, cid)
-
-        expanded.append(chunk)
-    return expanded
 
 
 def _build_context(chunks) -> str:
@@ -74,20 +69,38 @@ def _pick_chunks(state: dict):
 
 def _history_messages(history: list[dict] | None):
     """Convert a stored list of {role, content} into LangChain messages,
-    capped at the most recent _HISTORY_MAX_TURNS pairs."""
+    capped at the most recent _HISTORY_MAX_TURNS *pairs*.
+
+    Slicing by message count assumed strict user/assistant alternation;
+    a mid-stream error or a manually-inserted system note broke that and
+    could slice the leading assistant message off, leaving an orphan
+    context. Walk from the end and collect complete (user, assistant)
+    pairs instead."""
     if not history:
         return []
-    trimmed = history[-(_HISTORY_MAX_TURNS * 2):]
-    msgs = []
-    for item in trimmed:
+    pairs: list[tuple[str, str]] = []
+    pending_asst: str | None = None
+    for item in reversed(history):
         role = (item.get("role") or "").lower()
         content = item.get("content") or ""
         if not content:
             continue
         if role == "assistant":
-            msgs.append(AIMessage(content=content))
-        else:
-            msgs.append(HumanMessage(content=content))
+            pending_asst = content
+        elif role in ("user", "human"):
+            if pending_asst is not None:
+                pairs.append((content, pending_asst))
+                pending_asst = None
+                if len(pairs) >= _HISTORY_MAX_TURNS:
+                    break
+    msgs = []
+    for user_content, asst_content in reversed(pairs):
+        msgs.append(HumanMessage(
+            content=sanitize_context_text(user_content, max_len=_HISTORY_MSG_MAX_CHARS)
+        ))
+        msgs.append(AIMessage(
+            content=sanitize_context_text(asst_content, max_len=_HISTORY_MSG_MAX_CHARS)
+        ))
     return msgs
 
 

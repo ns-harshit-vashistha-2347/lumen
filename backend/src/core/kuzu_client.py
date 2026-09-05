@@ -86,3 +86,35 @@ def reset_repo_graph(repo_id: str) -> None:
     drop_kuzu(repo_id)
     kuzu_path(repo_id).parent.mkdir(parents=True, exist_ok=True)
 
+
+def delete_paths_from_graph(repo_id: str, paths: list[str]) -> None:
+    """Remove File nodes for the given rel-paths, along with the Symbols
+    they defined and every edge touching either. Used by incremental
+    reindex so a file that was renamed/removed/changed doesn't leave
+    stale nodes and edges behind.
+
+    Kuzu treats DETACH DELETE the same way Cypher does — it drops the
+    relationships incident to the deleted nodes. We do symbols first so
+    a Symbol → Symbol CALLS edge whose endpoint we're removing goes
+    away in the same transaction."""
+    if not paths:
+        return
+    if not kuzu_path(repo_id).exists():
+        return
+    try:
+        with kuzu_connection(repo_id, create=False) as conn:
+            for chunk_start in range(0, len(paths), 200):
+                batch = paths[chunk_start:chunk_start + 200]
+                conn.execute(
+                    "MATCH (s:Symbol) WHERE s.file_path IN $paths DETACH DELETE s",
+                    {"paths": batch},
+                )
+                conn.execute(
+                    "MATCH (f:File) WHERE f.path IN $paths DETACH DELETE f",
+                    {"paths": batch},
+                )
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        logger.warning(f"[kuzu] partial delete for repo {repo_id} failed: {exc}")
+

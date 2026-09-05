@@ -1,0 +1,100 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.in
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          # requirements.in is intentionally source-of-truth; we install
+          # directly rather than pinning a lockfile so CI reflects the
+          # same package graph the Dockerfile builds.
+          pip install -r requirements.in
+
+      - name: Run pytest
+        env:
+          # Neutralise settings-required envs; the unit-test suite touches
+          # no live services.
+          JWT_SECRET_KEY: test-secret-only-for-ci
+          ENV: test
+        run: pytest
+
+  alembic-check:
+    # Fails when SQLAlchemy models drift from committed migrations.
+    # Uses a throwaway Postgres so `alembic upgrade head` has somewhere
+    # to apply migrations before `alembic check` diffs the model metadata.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumen
+          POSTGRES_PASSWORD: lumen
+          POSTGRES_DB: lumen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumen"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.in
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.in
+
+      - name: Apply migrations
+        env:
+          POSTGRES_USER: lumen
+          POSTGRES_PASSWORD: lumen
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: lumen
+          JWT_SECRET_KEY: test-secret-only-for-ci
+        run: alembic upgrade head
+
+      - name: Detect model drift
+        env:
+          POSTGRES_USER: lumen
+          POSTGRES_PASSWORD: lumen
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: lumen
+          JWT_SECRET_KEY: test-secret-only-for-ci
+        # `alembic check` exits non-zero if a new migration is needed.
+        run: alembic check

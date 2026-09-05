@@ -74,6 +74,20 @@ class DenseRetriever(BaseRetriever):
         return chunks
 
 
+# One DenseRetriever per collection. The retriever itself only owns a
+# reference to the (cached) collection + embedder, so this is a cheap way
+# to avoid re-fetching the collection handle on every request.
+_DENSE_RETRIEVERS: dict[str, "DenseRetriever"] = {}
+
+
+def _get_dense_retriever(collection_name: str) -> "DenseRetriever":
+    r = _DENSE_RETRIEVERS.get(collection_name)
+    if r is None:
+        r = DenseRetriever(collection_name)
+        _DENSE_RETRIEVERS[collection_name] = r
+    return r
+
+
 async def dense_retrieval_node(state: dict) -> dict:
     queries = state.get("queries") or [state["query"]]
     retrieval_k = state.get("retrieval_k", state.get("top_k", 5))
@@ -85,7 +99,7 @@ async def dense_retrieval_node(state: dict) -> dict:
         f"retrieval_k={retrieval_k} user_id={user_id} document_ids={document_ids}"
     )
 
-    retriever = DenseRetriever(settings.CHROMA_COLLECTION_DOCUMENTS)
+    retriever = _get_dense_retriever(settings.CHROMA_COLLECTION_DOCUMENTS)
 
     # embed_query + chroma.query are both blocking; run them off the event loop
     # so concurrent requests aren't serialized behind each other.

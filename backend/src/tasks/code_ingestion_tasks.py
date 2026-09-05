@@ -6,14 +6,20 @@ from src.celery_app import celery_app
 from src.core.config import settings
 from src.core.crypto import decrypt_token
 from src.core.github_client import (
-    GitHubRepoRef, RepoCloneError, clone_repo, parse_github_url, remove_clone, walk_repo,
+    GitHubRepoRef, RepoCloneError, clone_repo, diff_paths, parse_github_url,
+    remove_clone, unshallow, walk_repo,
 )
 from src.core.logging import get_logger
 from src.core.sync_db import get_sync_db
+from src.core.vectorstore import get_collections
 from src.graphs.code_ingestion_graph import code_ingestion_graph
 from src.models.repo import Repo, RepoStatus
 
 logger = get_logger(__name__)
+
+
+class PermanentIngestError(RuntimeError):
+    """Marker: don't retry this. Bad URL, bad token, missing repo, over cap."""
 
 
 def _set_status(repo_id: str, status: RepoStatus, *, error: str | None = None, **fields) -> None:
@@ -31,10 +37,6 @@ def _set_status(repo_id: str, status: RepoStatus, *, error: str | None = None, *
         db.commit()
     finally:
         db.close()
-
-from src.core.github_client import diff_paths, unshallow
-from src.core.vectorstore import get_collections
-from src.core.config import settings
 
 
 @celery_app.task(bind=True, name="reindex_repo_task", max_retries=2, default_retry_delay=60, acks_late=True)
@@ -112,11 +114,32 @@ def reindex_repo_task(self, repo_id: str, new_sha: str | None = None):
                 embeddings=emb,
             )
 
-        # Graph: cheapest correct thing is to rebuild it from the current
-        # tree. Kuzu writes are fast at this scale; incremental graph diffs
-        # are hard because edges cross files.
+        # Graph: incremental update — prune the removed + changed files'
+        # nodes/edges, then re-extract for just the changed subset.
+        # Cross-file edges (imports/calls) whose OTHER end is unchanged are
+        # regenerated correctly because we re-resolve against every symbol
+        # from the changed files; edges whose *both* ends live in unchanged
+        # files are undisturbed. Full rebuild remains the fallback if
+        # anything explodes.
         from src.nodes.ingestion.graph_build import graph_build_node
-        graph_build_node({"repo_id": repo_id, "files": all_files, "clone_path": str(clone_dest)})
+        try:
+            graph_build_node({
+                "repo_id": repo_id,
+                "files": changed_entries,
+                "removed_paths": list(removed),
+                "clone_path": str(clone_dest),
+                "incremental": True,
+            })
+        except Exception as exc:
+            logger.warning(
+                f"[reindex] incremental graph update failed ({exc}); "
+                f"falling back to full rebuild"
+            )
+            graph_build_node({
+                "repo_id": repo_id,
+                "files": all_files,
+                "clone_path": str(clone_dest),
+            })
 
         _set_status(
             repo_id, RepoStatus.COMPLETED,
@@ -159,18 +182,22 @@ def ingest_repo_task(self, repo_id: str) -> dict:
         _set_status(repo_id, RepoStatus.CLONING)
         remove_clone(clone_dest)  # in case of leftover from a failed run
         head_sha = clone_repo(ref, clone_dest, token=token, depth=1)
+        # Drop the token from worker memory as soon as the clone is done.
+        # Nothing downstream needs it and holding it just widens the blast
+        # radius of any later exception dump / debugger frame.
+        token = None
 
         _set_status(repo_id, RepoStatus.PARSING)
         files = walk_repo(clone_dest)
 
-        # Enforce caps
+        # Enforce caps — these are terminal (a bigger repo won't shrink on retry).
         total_bytes = sum(f.size for f in files)
         if len(files) > settings.REPO_MAX_FILES:
-            raise RepoCloneError(
+            raise PermanentIngestError(
                 f"Repo has {len(files)} indexable files; limit is {settings.REPO_MAX_FILES}"
             )
         if total_bytes > settings.REPO_MAX_SIZE_MB * 1024 * 1024:
-            raise RepoCloneError(
+            raise PermanentIngestError(
                 f"Repo indexable size {total_bytes/1024/1024:.1f}MB exceeds "
                 f"{settings.REPO_MAX_SIZE_MB}MB cap"
             )
@@ -206,6 +233,28 @@ def ingest_repo_task(self, repo_id: str) -> dict:
         logger.info(f"[ingest_repo_task] done repo_id={repo_id} chunks={stored}")
         return {"repo_id": repo_id, "status": "completed", "chunks": stored}
 
+    except PermanentIngestError as exc:
+        # Cap violation, bad token/URL, missing repo — retrying will just
+        # burn another minute and produce the same error. Mark failed and
+        # exit cleanly.
+        logger.warning(f"[ingest_repo_task] permanent failure repo_id={repo_id}: {exc}")
+        _set_status(repo_id, RepoStatus.FAILED, error=str(exc)[:1000])
+        return {"repo_id": repo_id, "status": "failed", "reason": str(exc)[:200]}
+    except RepoCloneError as exc:
+        # Clone-time errors: 404/403 (permanent) vs network blip (retryable).
+        msg = str(exc).lower()
+        terminal_markers = ("not found", "authentication failed", "repository not found",
+                            "access denied", "could not read", "exceeds", "limit is")
+        if any(m in msg for m in terminal_markers):
+            logger.warning(f"[ingest_repo_task] terminal clone error repo_id={repo_id}: {exc}")
+            _set_status(repo_id, RepoStatus.FAILED, error=str(exc)[:1000])
+            return {"repo_id": repo_id, "status": "failed", "reason": str(exc)[:200]}
+        logger.exception(f"[ingest_repo_task] transient clone error repo_id={repo_id}")
+        _set_status(repo_id, RepoStatus.FAILED, error=str(exc)[:1000])
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            raise
     except Exception as exc:
         logger.exception(f"[ingest_repo_task] failed repo_id={repo_id}")
         _set_status(repo_id, RepoStatus.FAILED, error=str(exc)[:1000])

@@ -1,33 +1,42 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { api } from "@/lib/api";
 import { tokenStore } from "@/lib/token-store";
 
 export default function OAuthCallbackPage() {
   const router = useRouter();
+  const search = useSearchParams();
 
   useEffect(() => {
-    // fragment (#...) is client-only; parse tokens the backend appended
-    const fragment = window.location.hash.slice(1);
-    const params = new URLSearchParams(fragment);
-    const access = params.get("access_token");
-    const refresh = params.get("refresh_token");
-
-    // Clear the fragment ASAP so tokens don't stay in history / referrer.
+    const claim = search.get("claim");
+    // Wipe the URL first so the claim id doesn't linger in history or
+    // get sent as a Referer on any subsequent nav from this page.
     try {
       window.history.replaceState(null, "", window.location.pathname);
     } catch {
       /* noop */
     }
-
-    if (access && refresh) {
-      tokenStore.set(access, refresh);
-      router.replace("/chat");
-    } else {
+    if (!claim) {
       router.replace("/login?error=oauth_failed");
+      return;
     }
-  }, [router]);
+
+    (async () => {
+      try {
+        const pair = await api.post<{ access_token: string; refresh_token: string }>(
+          "/auth/oauth/exchange",
+          { claim },
+          /* auth */ false
+        );
+        tokenStore.set(pair.access_token, pair.refresh_token);
+        router.replace("/chat");
+      } catch {
+        router.replace("/login?error=oauth_failed");
+      }
+    })();
+  }, [router, search]);
 
   return (
     <div className="flex min-h-screen items-center justify-center">

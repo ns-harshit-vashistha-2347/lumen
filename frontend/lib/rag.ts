@@ -62,6 +62,9 @@ export interface DocumentChunksResponse {
   filename: string;
   extension: string;
   chunks: DocumentChunk[];
+  limit?: number;
+  offset?: number;
+  total?: number;
 }
 
 export const docsApi = {
@@ -75,8 +78,13 @@ export const docsApi = {
   delete: (id: string) => api.del<void>(`/documents/${id}`),
   preview: (id: string, limit = 8) =>
     api.get<DocumentPreview>(`/documents/${id}/preview?limit=${limit}`),
-  chunks: (id: string) =>
-    api.get<DocumentChunksResponse>(`/documents/${id}/chunks`),
+  chunks: (id: string, opts: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    if (opts.offset != null) q.set("offset", String(opts.offset));
+    const suffix = q.toString() ? `?${q.toString()}` : "";
+    return api.get<DocumentChunksResponse>(`/documents/${id}/chunks${suffix}`);
+  },
   // Raw file URL — used by <iframe> for PDFs. Bearer token is added by
   // the same fetch wrapper as api.get; for iframe use we build a
   // one-shot signed URL via the helper below.
@@ -205,6 +213,16 @@ export const reposApi = {
   refresh: (id: string) => api.post<Repo>(`/repos/${id}/refresh`),
   progress: (id: string) => api.get<RepoProgress>(`/repos/${id}/progress`),
   del: (id: string) => api.del<void>(`/repos/${id}`),
+  /** Fetch one file's text for the code-playground viewer. Returns
+   * `{content, language, source: "clone"|"chunks", total_lines}`. */
+  file: (id: string, path: string) =>
+    api.get<{
+      path: string;
+      source: "clone" | "chunks";
+      language: string | null;
+      content: string;
+      total_lines: number | null;
+    }>(`/repos/${id}/file?path=${encodeURIComponent(path)}`),
 };
 
 export const codeQueryApi = {

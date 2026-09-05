@@ -203,25 +203,36 @@ async def raw_document(
     if not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(status_code=410, detail="Original file no longer on disk")
     mime, _ = mimetypes.guess_type(doc.filename)
+    # nosniff prevents the browser from re-typing user-uploaded content as
+    # something executable (e.g. an .md served as HTML). CSP sandbox blocks
+    # scripts inside a rendered PDF/HTML frame. Filename is quoted to keep
+    # any embedded double-quote from breaking the header.
+    safe_name = (doc.filename or "download").replace('"', "")
     return FileResponse(
         doc.file_path,
         media_type=mime or "application/octet-stream",
-        filename=doc.filename,
-        # inline so PDFs render in <iframe>/<embed>, not download-forced.
-        headers={"Content-Disposition": f'inline; filename="{doc.filename}"'},
+        filename=safe_name,
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+            "Referrer-Policy": "no-referrer",
+        },
     )
 
 
 @document_router.get("/{document_id}/chunks")
 async def list_document_chunks(
     document_id: uuid.UUID,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return every indexed chunk of the document with its metadata
-    (chunk_index, page, start/end line offsets). The viewer uses this to
-    show a chunk sidebar and to highlight all-other citations in the same
-    doc while one is being inspected."""
+    """Return a page of the indexed chunks for a document with metadata.
+    A big doc can have thousands of chunks — the previous unpaginated
+    version held the whole payload in memory server-side AND on the wire.
+    The viewer paginates with `limit` + `offset`."""
     result = await db.execute(
         select(Document).where(
             Document.id == document_id, Document.user_id == current_user.id
@@ -232,6 +243,7 @@ async def list_document_chunks(
         raise HTTPException(status_code=404, detail="Document not found")
 
     chunks: list[dict] = []
+    total = doc.chunk_count or 0
     if doc.status == DocumentStatus.COMPLETED:
         try:
             collection = get_collections(settings.CHROMA_COLLECTION_DOCUMENTS)
@@ -241,6 +253,8 @@ async def list_document_chunks(
                     {"document_id": str(document_id)},
                 ]},
                 include=["metadatas", "documents"],
+                limit=limit,
+                offset=offset,
             )
             ids = data.get("ids", []) or []
             documents = data.get("documents", []) or []
@@ -274,6 +288,9 @@ async def list_document_chunks(
         "filename": doc.filename,
         "extension": ext.lower().lstrip("."),
         "chunks": chunks,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
     }
 
 
@@ -297,6 +314,23 @@ async def delete_document(
             os.remove(doc.file_path)
     except Exception as exc:
         logger.warning(f"Failed to delete file {doc.file_path}: {exc}")
+
+    # Purge indexed vectors so a deleted document stops surfacing in
+    # retrieval. Bump the BM25 corpus version so the in-memory index is
+    # rebuilt without the removed chunks on next query.
+    try:
+        collection = get_collections(settings.CHROMA_COLLECTION_DOCUMENTS)
+        collection.delete(where={"$and": [
+            {"user_id": str(current_user.id)},
+            {"document_id": str(document_id)},
+        ]})
+    except Exception as exc:
+        logger.warning(f"[/documents] chroma purge failed for {document_id}: {exc}")
+    try:
+        from src.core.cache import bump_bm25_version
+        bump_bm25_version(settings.CHROMA_COLLECTION_DOCUMENTS)
+    except Exception:
+        pass
 
     await db.delete(doc)
     await db.commit()

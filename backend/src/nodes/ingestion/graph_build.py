@@ -21,7 +21,9 @@ from src.nodes.ingestion.import_resolvers import (
     ResolverContext, build_context, resolve_python, resolve_js,
 )
 
-from src.core.kuzu_client import kuzu_connection, reset_repo_graph
+from src.core.kuzu_client import (
+    delete_paths_from_graph, kuzu_connection, reset_repo_graph,
+)
 from src.core.logging import get_logger
 from src.nodes.ingestion.code_parse import SYMBOL_NODE_TYPES, TS_LANG_KEY, _get_parser
 
@@ -194,10 +196,16 @@ def _find_node_at(root, start_row: int, end_row: int, types: set[str]):
 def graph_build_node(state: dict) -> dict:
     repo_id: str = state["repo_id"]
     files = state["files"]
+    # Incremental mode: reindex passes only the changed subset plus a list
+    # of removed paths. We prune the affected file/symbol subgraph first,
+    # then re-add just the changed files. Full-build mode (initial ingest)
+    # wipes and rebuilds — the default.
+    incremental: bool = bool(state.get("incremental"))
+    removed_paths: list[str] = list(state.get("removed_paths") or [])
 
     # Only bother for languages with tree-sitter grammars
     files = [f for f in files if f.language in TS_LANG_KEY]
-    if not files:
+    if not files and not removed_paths:
         logger.info(f"[graph_build] repo={repo_id} no supported languages; skipping")
         return {"graph_symbols": 0, "graph_edges": 0}
 
@@ -249,7 +257,13 @@ def graph_build_node(state: dict) -> dict:
             unresolved_calls.append((caller_id, name))
 
     # --- persist -----------------------------------------------------------
-    reset_repo_graph(repo_id)
+    if incremental:
+        # Prune the affected subgraph: the incoming changed files' current
+        # nodes/edges, plus any files the diff reported as removed.
+        prune_targets = list({fe.rel_path for fe in files} | set(removed_paths))
+        delete_paths_from_graph(repo_id, prune_targets)
+    else:
+        reset_repo_graph(repo_id)
     with kuzu_connection(repo_id) as conn:
         # Files
         for fe in files:

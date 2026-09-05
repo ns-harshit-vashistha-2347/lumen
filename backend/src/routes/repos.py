@@ -199,6 +199,142 @@ async def delete_repo(
 from src.models.repo import RepoFile
 from sqlalchemy import func
 
+from fastapi import Query as _Query
+
+
+_MAX_FILE_BYTES = 2 * 1024 * 1024  # 2MB cap for the file viewer
+
+
+def _safe_join(root: Path, rel: str) -> Path | None:
+    """Reject any relative path that escapes the clone root. Symlinks are
+    resolved before the containment check so a `link -> /etc` inside the
+    tree can't leak."""
+    try:
+        candidate = (root / rel).resolve()
+        root_resolved = root.resolve()
+    except Exception:
+        return None
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return None
+    return candidate
+
+
+@repos_router.get("/{repo_id}/file")
+async def repo_file(
+    repo_id: uuid.UUID,
+    path: str = _Query(..., min_length=1, max_length=1024),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return one repo file's text so the FE viewer can render + highlight
+    the exact citation range.
+
+    Strategy: prefer the on-disk clone (fast, complete). If the clone has
+    been GC'd (default post-ingest), fall back to reconstructing an
+    approximate file view from the indexed chunks in Chroma — the chunks
+    carry `path`, `start_line`, `end_line`, `content`, which is enough to
+    stitch the cited spans back together for viewing. The result is
+    labelled `source: "clone" | "chunks"` so the FE can warn the reader
+    when they're seeing a chunk-assembled view."""
+    result = await db.execute(
+        select(Repo).where(Repo.id == repo_id, Repo.user_id == current_user.id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+
+    clone_dest = Path(settings.REPO_CLONE_DIR) / str(repo_id)
+    safe = _safe_join(clone_dest, path)
+    if safe is not None and safe.exists() and safe.is_file():
+        try:
+            size = safe.stat().st_size
+        except OSError:
+            size = 0
+        if size > _MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail=f"File exceeds {_MAX_FILE_BYTES} bytes")
+        try:
+            text = safe.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=415, detail="Binary file")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Read failed: {exc}")
+        return {
+            "path": path,
+            "source": "clone",
+            "language": _lang_from_path(path),
+            "content": text,
+            "total_lines": text.count("\n") + 1,
+        }
+
+    # Fallback: assemble from chunks. We include every chunk for this path
+    # and interleave `... N lines omitted ...` markers between non-adjacent
+    # ranges so the reader isn't misled into thinking they're seeing the
+    # whole file.
+    try:
+        collection = get_chroma_client().get_or_create_collection(repo.collection_name)
+        data = collection.get(
+            where={"path": path},
+            include=["metadatas", "documents"],
+            limit=1000,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Chunk lookup failed: {exc}")
+
+    docs = data.get("documents") or []
+    metas = data.get("metadatas") or []
+    rows: list[tuple[int, int, str]] = []
+    for content, meta in zip(docs, metas):
+        m = meta or {}
+        start = int(m.get("start_line") or 0)
+        end = int(m.get("end_line") or 0)
+        if start <= 0:
+            continue
+        rows.append((start, end or start, content or ""))
+    rows.sort(key=lambda r: r[0])
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="File not found in clone or index")
+
+    stitched: list[str] = []
+    prev_end = 0
+    for start, end, content in rows:
+        if prev_end and start > prev_end + 1:
+            stitched.append(f"\n// ... {start - prev_end - 1} lines omitted ...\n")
+        # Trim the chunk's own preamble (the "# path:start-end  [lang]  label" header)
+        # from AST-emitted chunks so the viewer sees pristine file text.
+        lines = content.splitlines()
+        if lines and lines[0].startswith("# ") and ":" in lines[0]:
+            lines = lines[1:]
+        stitched.append("\n".join(lines))
+        prev_end = max(prev_end, end)
+
+    return {
+        "path": path,
+        "source": "chunks",
+        "language": _lang_from_path(path),
+        "content": "\n".join(stitched),
+        "total_lines": None,
+    }
+
+
+_LANG_BY_EXT = {
+    ".py": "python", ".js": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "tsx", ".go": "go", ".java": "java",
+    ".rs": "rust", ".rb": "ruby", ".php": "php", ".c": "c", ".h": "c",
+    ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp", ".cs": "csharp",
+    ".swift": "swift", ".kt": "kotlin", ".scala": "scala",
+    ".md": "markdown", ".rst": "rst", ".txt": "text",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+    ".sh": "bash", ".sql": "sql",
+}
+
+
+def _lang_from_path(rel: str) -> str | None:
+    dot = rel.rfind(".")
+    return _LANG_BY_EXT.get(rel[dot:].lower()) if dot >= 0 else None
+
 @repos_router.get("/{repo_id}/progress")
 async def repo_progress(
     repo_id: uuid.UUID,

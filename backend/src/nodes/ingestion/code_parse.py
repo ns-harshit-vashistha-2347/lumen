@@ -260,13 +260,37 @@ def parse_file(file_entry) -> list[CodeChunk]:
 
 def code_parse_node(state: dict) -> dict:
     """LangGraph node: read state['files'] (list[FileEntry]) → produce
-    state['chunks'] (list[CodeChunk])."""
+    state['chunks'] (list[CodeChunk]).
+
+    Fan-out per file: parse is a mix of disk I/O and CPU-bound tree-sitter
+    work, so a bounded thread pool cuts wall-clock ingestion time roughly
+    linearly with worker count on a multi-core box. Bounded because
+    tree-sitter parsers hold C state and a huge pool doesn't help — the
+    disk and the tree-sitter allocator become the bottleneck first.
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     files = state["files"]
+    if not files:
+        return {"chunks": []}
+
+    max_workers = max(2, min(16, (os.cpu_count() or 4)))
     all_chunks: list[CodeChunk] = []
-    for fe in files:
+
+    def _safe(fe):
         try:
-            all_chunks.extend(parse_file(fe))
+            return parse_file(fe)
         except Exception as exc:
             logger.warning(f"[code_parse] failed on {fe.rel_path}: {exc}")
-    logger.info(f"[code_parse] {len(files)} files → {len(all_chunks)} chunks")
+            return []
+
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="code-parse") as pool:
+        for chunks in pool.map(_safe, files):
+            all_chunks.extend(chunks)
+
+    logger.info(
+        f"[code_parse] {len(files)} files → {len(all_chunks)} chunks "
+        f"(workers={max_workers})"
+    )
     return {"chunks": all_chunks}

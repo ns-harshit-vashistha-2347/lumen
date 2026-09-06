@@ -11,7 +11,7 @@ from src.core.cache import get_cached_query, set_cached_query
 from src.core.chat_history import append_turn, ensure_session, load_history
 from src.core.db import get_db
 from src.core.deps import get_current_user
-from src.core.graph_trace import astream_with_trace, new_trace_id
+from src.core.graph_trace import astream_with_trace, new_trace_id, set_trace_owner
 from src.core.llm import get_llm
 from src.core.logging import get_logger
 from src.core.rate_limit import limiter
@@ -69,6 +69,7 @@ async def run_query(
             return QueryResponse(session_id=session.id if session else None, **cached)
 
     trace_id = new_trace_id()
+    set_trace_owner(trace_id, str(current_user.id))
     initial_state = {
         "query": payload.query,
         "top_k": payload.top_k,
@@ -176,6 +177,7 @@ async def run_query_stream(
             return StreamingResponse(cached_stream(), media_type="text/plain")
 
     trace_id = new_trace_id()
+    set_trace_owner(trace_id, str(current_user.id))
     try:
         partial = await astream_with_trace(retrieval_graph, {
             "query": payload.query,

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.db import get_db
 from src.core.deps import get_current_user
-from src.core.graph_trace import graph_structure, read_trace
+from src.core.graph_trace import graph_structure, read_trace_for_user
 from src.core.logging import get_logger
 from src.graphs.code_query_graph import code_query_graph
 from src.graphs.code_ingestion_graph import code_ingestion_graph
@@ -157,6 +157,9 @@ async def get_graph_structure(
 @chat_router.get("/traces/{trace_id}", response_model=GraphTraceResponse)
 async def get_graph_trace(
     trace_id: str,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    return GraphTraceResponse(trace_id=trace_id, events=read_trace(trace_id))
+    events = read_trace_for_user(trace_id, str(current_user.id))
+    if events is None:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return GraphTraceResponse(trace_id=trace_id, events=events)

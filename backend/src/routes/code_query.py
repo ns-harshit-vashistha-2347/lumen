@@ -13,7 +13,7 @@ from src.core.chat_history import append_turn, ensure_session, load_history
 from src.core.config import settings
 from src.core.db import get_db
 from src.core.deps import get_current_user
-from src.core.graph_trace import astream_with_trace, new_trace_id
+from src.core.graph_trace import astream_with_trace, new_trace_id, set_trace_owner
 from src.core.llm import get_llm
 from src.core.logging import get_logger
 from src.graphs.code_query_graph import code_query_graph, code_retrieval_graph
@@ -76,6 +76,7 @@ async def run_code_query(
         history = await load_history(db, session.id)
 
     trace_id = new_trace_id()
+    set_trace_owner(trace_id, str(current_user.id))
     result = await astream_with_trace(code_query_graph, {
         "repo_id": str(repo.id),
         "query": payload.query,
@@ -267,6 +268,7 @@ async def stream_code_query(
         history = await load_history(db, session.id)
 
     trace_id = new_trace_id()
+    set_trace_owner(trace_id, str(current_user.id))
     try:
         partial = await astream_with_trace(code_retrieval_graph, {
             "repo_id": str(repo.id),

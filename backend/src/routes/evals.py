@@ -261,24 +261,14 @@ async def get_run(
     results = (await db.execute(
         select(EvalResult).where(EvalResult.run_id == run_id).order_by(EvalResult.created_at)
     )).scalars().all()
+    from src.schemas.eval import EvalResultResponse
     return EvalRunDetailResponse(
-        id=run.id, suite_id=run.suite_id, status=run.status.value,
+        id=run.id, suite_id=run.suite_id, status=run.status,
         total_cases=run.total_cases, pass_count=run.pass_count,
         partial_count=run.partial_count, fail_count=run.fail_count,
         error_count=run.error_count,
         started_at=run.started_at, finished_at=run.finished_at,
         created_at=run.created_at,
         cases=[EvalCaseResponse.model_validate(c) for c in cases],
-        results=[EvalResultResponse_from(r) for r in results],
-    )
-
-
-def EvalResultResponse_from(r: EvalResult):
-    # Small helper to serialize the enum → its string value.
-    from src.schemas.eval import EvalResultResponse
-    return EvalResultResponse(
-        id=r.id, case_id=r.case_id, verdict=r.verdict.value,
-        actual_answer=r.actual_answer, judge_reason=r.judge_reason,
-        latency_ms=r.latency_ms, score=r.score, sources=r.sources,
-        created_at=r.created_at,
+        results=[EvalResultResponse.model_validate(r) for r in results],
     )

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _enum_to_value(v):
+    # Response models accept either a raw enum member (ORM object) or an
+    # already-serialized string. Normalise to the string value so clients
+    # don't see "EvalRunStatus.QUEUED".
+    if isinstance(v, enum.Enum):
+        return v.value
+    return v
 
 
 class EvalSuiteCreate(BaseModel):
@@ -53,6 +63,11 @@ class EvalRunResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _norm_status(cls, v):
+        return _enum_to_value(v)
+
 
 class EvalResultResponse(BaseModel):
     id: uuid.UUID
@@ -66,6 +81,11 @@ class EvalResultResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _norm_verdict(cls, v):
+        return _enum_to_value(v)
 
 
 class EvalRunDetailResponse(EvalRunResponse):

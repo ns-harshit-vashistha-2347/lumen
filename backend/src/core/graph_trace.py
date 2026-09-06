@@ -34,6 +34,32 @@ def _trace_key(trace_id: str) -> str:
     return f"graph_trace:{trace_id}"
 
 
+def _trace_owner_key(trace_id: str) -> str:
+    # Owner id stored alongside the trace so read_trace can enforce
+    # per-user isolation. Independent key so the events list keeps its
+    # simple rpush/lrange shape.
+    return f"graph_trace_owner:{trace_id}"
+
+
+def set_trace_owner(trace_id: str, user_id: str) -> None:
+    """Bind a trace_id to the user that started it. Best-effort — a
+    Redis outage falls back to unowned (read_trace_for_user then treats
+    it as inaccessible)."""
+    try:
+        r = get_redis_client()
+        r.set(_trace_owner_key(trace_id), str(user_id), ex=TRACE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning(f"[graph_trace] failed to record owner: {exc}")
+
+
+def _trace_owner(trace_id: str) -> str | None:
+    try:
+        return get_redis_client().get(_trace_owner_key(trace_id))
+    except Exception as exc:
+        logger.warning(f"[graph_trace] failed to read owner: {exc}")
+        return None
+
+
 def _item_preview(item: Any) -> str:
     """Render one item inside a list — chunks, dicts, or primitives — as a
     short, human-readable line."""
@@ -157,6 +183,16 @@ def read_trace(trace_id: str) -> list[dict]:
         except Exception:
             continue
     return events
+
+
+def read_trace_for_user(trace_id: str, user_id: str) -> list[dict] | None:
+    """Owner-scoped read. Returns None when the trace isn't ours (or the
+    owner mapping expired/is missing), so the caller can 404 instead of
+    leaking another user's pipeline internals."""
+    owner = _trace_owner(trace_id)
+    if owner is None or owner != str(user_id):
+        return None
+    return read_trace(trace_id)
 
 
 def graph_structure(compiled_graph) -> dict:

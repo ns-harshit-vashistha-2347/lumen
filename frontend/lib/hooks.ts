@@ -26,8 +26,10 @@ export function useDocuments(opts?: SWRConfiguration<Document[]>) {
       // Documents can move through parsing→embedding→completed in the
       // background; a light poll keeps status badges honest without
       // pounding the API.
-      refreshInterval: (data) =>
-        (data || []).some((d) => d.status !== "completed" && d.status !== "failed")
+      refreshInterval: (data: Document[] | undefined) =>
+        (data || []).some(
+          (d: Document) => d.status !== "completed" && d.status !== "failed"
+        )
           ? 3000
           : 0,
       ...opts,

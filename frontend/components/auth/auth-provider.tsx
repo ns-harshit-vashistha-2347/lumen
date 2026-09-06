@@ -35,19 +35,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       router.replace("/login");
       return;
     }
+
+    // 401/403 = the token is bad, wipe and bounce to login.
+    // Anything else (5xx, network, CORS) = transient — the token is fine,
+    // we just couldn't reach /me. Retry once with a small delay before
+    // giving up, so a hiccup doesn't log the user out.
+    const isAuthFailure = (err: unknown) =>
+      err instanceof ApiError && (err.status === 401 || err.status === 403);
+
     try {
       const me = await authApi.me();
       setUser(me);
+      return;
     } catch (err) {
-      // Only wipe the token and redirect for a real auth failure (401/403).
-      // For transient errors (5xx, network, CORS) keep the token so a retry
-      // works, but still show the login page so the user isn't stuck on the
-      // boot splash forever.
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      if (isAuthFailure(err)) {
         tokenStore.clear();
         setUser(null);
         router.replace("/login");
-      } else {
+        return;
+      }
+      // Transient — pause briefly, then retry once.
+      await new Promise((r) => setTimeout(r, 800));
+      try {
+        const me = await authApi.me();
+        setUser(me);
+        return;
+      } catch (err2) {
+        if (isAuthFailure(err2)) {
+          tokenStore.clear();
+        }
         setUser(null);
         router.replace("/login");
       }

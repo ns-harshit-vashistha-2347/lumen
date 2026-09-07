@@ -18,6 +18,7 @@ import {
   CircleDashed,
   Sparkles,
   FileText,
+  GitBranch,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,7 +26,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { docsApi, type Document } from "@/lib/rag";
+import { docsApi, reposApi, type Document, type Repo } from "@/lib/rag";
 import {
   evalsApi,
   type EvalCase,
@@ -84,16 +85,20 @@ function EvalsInner() {
   const [selectedSuite, setSelectedSuite] = useState<EvalSuite | null>(null);
   const [creating, setCreating] = useState(false);
   const [seedScopeIds, setSeedScopeIds] = useState<string[] | null>(null);
+  const [seedRepoId, setSeedRepoId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Deep-link from the library's "eval these" pill: `?fromScope=1` opens
-  // the new-suite modal with the current chat scope pre-selected. We strip
-  // the param after handling so a refresh doesn't re-trigger.
+  // Deep-links that open the new-suite modal pre-filled:
+  //   ?fromScope=1        → chat's document scope
+  //   ?repoId=<uuid>      → the given code repo (from code-playground)
+  // Strip the param after handling so a refresh doesn't re-trigger.
   useEffect(() => {
-    if (searchParams.get("fromScope") !== "1") return;
-    const ids = [...scopeStore.get()];
-    setSeedScopeIds(ids);
+    const repoId = searchParams.get("repoId");
+    const fromScope = searchParams.get("fromScope") === "1";
+    if (!repoId && !fromScope) return;
+    if (repoId) setSeedRepoId(repoId);
+    if (fromScope) setSeedScopeIds([...scopeStore.get()]);
     setCreating(true);
     router.replace("/evals");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -195,15 +200,18 @@ function EvalsInner() {
       {creating && (
         <NewSuiteModal
           seedScopeIds={seedScopeIds}
+          seedRepoId={seedRepoId}
           onClose={() => {
             setCreating(false);
             setSeedScopeIds(null);
+            setSeedRepoId(null);
           }}
           onCreated={(s) => {
             setSuites((cur) => [s, ...cur]);
             setSelectedSuite(s);
             setCreating(false);
             setSeedScopeIds(null);
+            setSeedRepoId(null);
           }}
         />
       )}
@@ -441,7 +449,9 @@ function SuiteDetail({
           )}
           <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-ink-faint">
             {cases.length} case{cases.length === 1 ? "" : "s"} ·{" "}
-            {suite.document_ids
+            {suite.repo_id
+              ? "scoped to a code repo"
+              : suite.document_ids
               ? `scoped to ${suite.document_ids.length} doc${
                   suite.document_ids.length === 1 ? "" : "s"
                 }`
@@ -823,20 +833,27 @@ function NewSuiteModal({
   onClose,
   onCreated,
   seedScopeIds,
+  seedRepoId,
 }: {
   onClose: () => void;
   onCreated: (s: EvalSuite) => void;
   seedScopeIds?: string[] | null;
+  seedRepoId?: string | null;
 }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
-  const [scope, setScope] = useState<"all" | "docs">(
-    seedScopeIds && seedScopeIds.length > 0 ? "docs" : "all"
+  const [scope, setScope] = useState<"all" | "docs" | "repo">(
+    seedRepoId ? "repo" : seedScopeIds && seedScopeIds.length > 0 ? "docs" : "all"
   );
   const [docs, setDocs] = useState<Document[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(
     () => new Set(seedScopeIds || [])
+  );
+  const [repos, setRepos] = useState<Repo[]>([]);
+  const [reposLoading, setReposLoading] = useState(false);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(
+    seedRepoId || null
   );
   const [busy, setBusy] = useState(false);
 
@@ -850,6 +867,18 @@ function NewSuiteModal({
         if (e instanceof ApiError) toast.error(e.detail);
       })
       .finally(() => setDocsLoading(false));
+  }, [scope]);
+
+  useEffect(() => {
+    if (scope !== "repo") return;
+    setReposLoading(true);
+    reposApi
+      .list()
+      .then((rows) => setRepos(rows.filter((r) => r.status === "completed")))
+      .catch((e) => {
+        if (e instanceof ApiError) toast.error(e.detail);
+      })
+      .finally(() => setReposLoading(false));
   }, [scope]);
 
   return (
@@ -888,14 +917,14 @@ function NewSuiteModal({
         />
 
         <label className="mb-1 block text-[10px] uppercase tracking-[0.16em] text-ink-faint">
-          document scope
+          scope
         </label>
-        <div className="mb-3 flex gap-2 text-[11px]">
+        <div className="mb-3 grid grid-cols-3 gap-2 text-[11px]">
           <button
             type="button"
             onClick={() => setScope("all")}
             className={cn(
-              "flex-1 rounded border px-2 py-1.5 text-left",
+              "rounded border px-2 py-1.5 text-left",
               scope === "all"
                 ? "border-mk-green/50 bg-mk-green/10 text-mk-green"
                 : "border-chrome-border text-ink-dim hover:border-mk-green/40"
@@ -903,14 +932,14 @@ function NewSuiteModal({
           >
             <div className="text-[11px]">whole library</div>
             <div className="mt-0.5 text-[9.5px] text-ink-faint">
-              runs go against every doc you have ingested
+              every ingested doc
             </div>
           </button>
           <button
             type="button"
             onClick={() => setScope("docs")}
             className={cn(
-              "flex-1 rounded border px-2 py-1.5 text-left",
+              "rounded border px-2 py-1.5 text-left",
               scope === "docs"
                 ? "border-mk-green/50 bg-mk-green/10 text-mk-green"
                 : "border-chrome-border text-ink-dim hover:border-mk-green/40"
@@ -918,7 +947,22 @@ function NewSuiteModal({
           >
             <div className="text-[11px]">specific docs</div>
             <div className="mt-0.5 text-[9.5px] text-ink-faint">
-              lock the suite to a fixed set of documents
+              a fixed set of documents
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setScope("repo")}
+            className={cn(
+              "rounded border px-2 py-1.5 text-left",
+              scope === "repo"
+                ? "border-mk-blue/50 bg-mk-blue/10 text-mk-blue"
+                : "border-chrome-border text-ink-dim hover:border-mk-blue/40"
+            )}
+          >
+            <div className="text-[11px]">code repo</div>
+            <div className="mt-0.5 text-[9.5px] text-ink-faint">
+              runs via the code_query pipeline
             </div>
           </button>
         </div>
@@ -961,6 +1005,40 @@ function NewSuiteModal({
           </div>
         )}
 
+        {scope === "repo" && (
+          <div className="mb-3 max-h-40 overflow-y-auto rounded border border-chrome-border bg-bg p-2">
+            {reposLoading ? (
+              <div className="p-2 text-[11px] text-ink-dim">
+                <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />{" "}
+                loading repos…
+              </div>
+            ) : repos.length === 0 ? (
+              <div className="p-2 text-[11px] text-ink-dim">
+                No completed repos yet. Ingest one in the{" "}
+                <span className="text-mk-blue">code</span> tab first.
+              </div>
+            ) : (
+              repos.map((r) => (
+                <label
+                  key={r.id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11.5px] hover:bg-chrome-hover/40"
+                >
+                  <input
+                    type="radio"
+                    name="repo-scope"
+                    checked={selectedRepoId === r.id}
+                    onChange={() => setSelectedRepoId(r.id)}
+                  />
+                  <GitBranch className="h-3 w-3 text-ink-faint" />
+                  <span className="truncate">
+                    {r.owner}/{r.name}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={onClose}
@@ -972,7 +1050,8 @@ function NewSuiteModal({
             disabled={
               !name.trim() ||
               busy ||
-              (scope === "docs" && selectedDocs.size === 0)
+              (scope === "docs" && selectedDocs.size === 0) ||
+              (scope === "repo" && !selectedRepoId)
             }
             onClick={async () => {
               setBusy(true);
@@ -982,6 +1061,8 @@ function NewSuiteModal({
                   description: desc.trim() || undefined,
                   document_ids:
                     scope === "docs" ? Array.from(selectedDocs) : undefined,
+                  repo_id:
+                    scope === "repo" && selectedRepoId ? selectedRepoId : undefined,
                 });
                 onCreated(s);
               } catch (e) {

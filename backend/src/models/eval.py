@@ -53,6 +53,14 @@ class EvalSuite(Base):
     # Scope every case in this suite to a fixed set of documents (like the
     # normal /query document_ids). NULL = whole library at run time.
     document_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # OR: bind the whole suite to a single code repo, in which case every
+    # case runs through the code_query_graph instead of the doc pipeline.
+    # Mutually exclusive with document_ids in practice — the create route
+    # enforces that.
+    repo_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("repos.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

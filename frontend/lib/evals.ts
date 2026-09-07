@@ -8,6 +8,7 @@ export interface EvalSuite {
   name: string;
   description: string | null;
   document_ids: string[] | null;
+  repo_id: string | null;
   created_at: string;
   updated_at: string;
   case_count: number;
@@ -52,12 +53,18 @@ export interface EvalRunDetail extends EvalRun {
 }
 
 export const evalsApi = {
-  listSuites: () => api.get<EvalSuite[]>("/evals/suites"),
+  listSuites: (opts: { repo_id?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.repo_id) q.set("repo_id", opts.repo_id);
+    const suffix = q.toString() ? `?${q.toString()}` : "";
+    return api.get<EvalSuite[]>(`/evals/suites${suffix}`);
+  },
   getSuite: (id: string) => api.get<EvalSuite>(`/evals/suites/${id}`),
   createSuite: (payload: {
     name: string;
     description?: string;
     document_ids?: string[];
+    repo_id?: string;
   }) => api.post<EvalSuite>("/evals/suites", payload),
   deleteSuite: (id: string) => api.del<void>(`/evals/suites/${id}`),
 

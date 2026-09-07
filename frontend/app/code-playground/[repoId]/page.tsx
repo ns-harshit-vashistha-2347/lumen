@@ -16,6 +16,7 @@ import {
   Radio,
   Cpu,
   Database,
+  FlaskConical,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -334,6 +335,14 @@ function CodeChatInner() {
             <SidebarToggle onClick={() => setSidebarOpen(true)} />
             <KbButton onClick={() => setKbOpen(true)} />
             <GraphButton onClick={() => setGraphOpen(true)} />
+            <Link
+              href={`/evals?repoId=${repoId}`}
+              title="Create an eval suite that runs cases through this repo's code_query pipeline"
+              className="flex items-center gap-1 rounded border border-chrome-border px-1.5 py-0.5 text-[10px] normal-case tracking-normal text-ink-dim transition hover:border-mk-green/50 hover:text-mk-green"
+            >
+              <FlaskConical className="h-3 w-3" />
+              eval
+            </Link>
           </div>
         </div>
       </div>

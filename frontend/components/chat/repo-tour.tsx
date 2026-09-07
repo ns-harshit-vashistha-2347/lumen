@@ -6,7 +6,7 @@
 // see it expanded once the tour is ready; a regenerate button re-triggers
 // the backend Celery task. Polls every 4s while generating.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, RefreshCcw, BookOpen, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
@@ -21,15 +21,21 @@ interface Props {
   ingested: boolean;
 }
 
+// Give up polling after ~2 minutes. On a healthy worker the tour lands in
+// 10-30s; anything past this window is almost always a stalled/down worker
+// or a persistently failing LLM call. Spinning forever hides that.
+const POLL_TIMEOUT_MS = 120_000;
+
 export function RepoTour({ repoId, ingested }: Props) {
   const [open, setOpen] = useState(true);
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
-  const [state, setState] = useState<"idle" | "loading" | "generating" | "ready" | "error">(
-    "idle"
-  );
+  const [state, setState] = useState<
+    "idle" | "loading" | "generating" | "ready" | "error" | "timeout"
+  >("idle");
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const pollStartRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     setState((s) => (s === "generating" ? "generating" : "loading"));
@@ -53,10 +59,20 @@ export function RepoTour({ repoId, ingested }: Props) {
     void load();
   }, [ingested, load]);
 
-  // Poll while generating. Backend task usually lands in 10-30s.
+  // Poll while generating. Backend task usually lands in 10-30s; stop
+  // after POLL_TIMEOUT_MS so a dead Celery worker or a task that keeps
+  // failing without persisting a marker doesn't leave the panel spinning.
   useEffect(() => {
     if (state !== "generating") return;
-    const t = setInterval(load, 4000);
+    if (pollStartRef.current == null) pollStartRef.current = Date.now();
+    const t = setInterval(() => {
+      const started = pollStartRef.current ?? Date.now();
+      if (Date.now() - started > POLL_TIMEOUT_MS) {
+        setState("timeout");
+        return;
+      }
+      void load();
+    }, 4000);
     return () => clearInterval(t);
   }, [state, load]);
 
@@ -65,6 +81,7 @@ export function RepoTour({ repoId, ingested }: Props) {
     try {
       await reposApi.regenerateTour(repoId);
       toast.success("regenerating tour…");
+      pollStartRef.current = Date.now();
       setState("generating");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.detail : "regenerate failed");
@@ -121,6 +138,15 @@ export function RepoTour({ repoId, ingested }: Props) {
             <div className="font-mono text-[11px] text-ink-dim">
               The tour is being generated. This usually takes 10-30s after
               ingest finishes. This panel will update automatically.
+            </div>
+          )}
+          {state === "timeout" && (
+            <div className="rounded border border-mk-yellow/40 bg-mk-yellow/5 p-2 font-mono text-[11px] text-ink-dim">
+              <div className="mb-1 text-mk-yellow">tour didn&apos;t land</div>
+              The generator hasn&apos;t finished after 2 minutes. The Celery
+              tour worker may be down, or the LLM call kept failing. Click
+              <span className="mx-1 text-mk-blue">regenerate</span>
+              to retry.
             </div>
           )}
           {state === "error" && (

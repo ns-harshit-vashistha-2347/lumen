@@ -20,6 +20,10 @@ class EvalSuiteCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     document_ids: list[uuid.UUID] | None = None
+    # Optional: bind this suite to a single code repo. When set, cases run
+    # through the code_query pipeline; document_ids MUST be omitted (the
+    # route rejects providing both).
+    repo_id: uuid.UUID | None = None
 
 
 class EvalCaseCreate(BaseModel):
@@ -41,6 +45,7 @@ class EvalSuiteResponse(BaseModel):
     name: str
     description: str | None
     document_ids: list[uuid.UUID] | None
+    repo_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
     case_count: int = 0

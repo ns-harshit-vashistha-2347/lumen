@@ -19,6 +19,7 @@ from src.celery_app import celery_app
 from src.core.llm import get_llm
 from src.core.logging import get_logger
 from src.core.sync_db import get_sync_db
+from src.graphs.code_query_graph import code_query_graph
 from src.graphs.query_graph import query_graph
 from src.models.eval import (
     EvalCase, EvalResult, EvalRun, EvalRunStatus, EvalSuite, EvalVerdict,
@@ -89,18 +90,28 @@ def _run_case_sync(
     loop,
     user_id: str,
     document_ids: list[str] | None,
+    repo_id: str | None,
     question: str,
 ) -> tuple[str, list, int]:
     """Execute the query pipeline synchronously for a single case on the
     provided event loop. Returns (answer, sources_payload, latency_ms).
 
-    The loop is owned by the caller and reused across cases — the rerank
-    module holds a singleton batcher whose asyncio.Queue is bound to the
-    first loop it saw, so tearing the loop down between cases would leave
-    the queue tied to a closed loop and the next case blows up with
-    "Event loop is closed".
+    Chooses code_query_graph when the suite is bound to a repo, else the
+    document query_graph. The loop is owned by the caller and reused across
+    cases — the rerank module holds a singleton batcher whose asyncio.Queue
+    is bound to the first loop it saw, so tearing the loop down between
+    cases would leave the queue tied to a closed loop and the next case
+    blows up with "Event loop is closed".
     """
     async def _go():
+        if repo_id:
+            state = {
+                "query": question,
+                "top_k": 5,
+                "repo_id": repo_id,
+                "chat_history": [],
+            }
+            return await code_query_graph.ainvoke(state)
         state = {
             "query": question,
             "top_k": 5,
@@ -153,6 +164,7 @@ def run_eval_suite_task(self, run_id: str) -> dict:
         db.commit()
         user_id = str(suite.user_id)
         document_ids = list(suite.document_ids) if suite.document_ids else None
+        repo_id = str(suite.repo_id) if suite.repo_id else None
         # Snapshot: what the cases were, so a later regression compares apples-to-apples.
         cases_payload = [
             {"id": str(c.id), "question": c.question, "expected": c.expected}
@@ -181,7 +193,7 @@ def run_eval_suite_task(self, run_id: str) -> dict:
                 time.sleep(CASE_INTERVAL_S)
             try:
                 answer, sources, latency = _run_case_sync(
-                    loop, user_id, document_ids, case["question"]
+                    loop, user_id, document_ids, repo_id, case["question"]
                 )
                 verdict, reason, score = _judge(case["question"], case["expected"], answer)
             except Exception as exc:  # noqa: BLE001

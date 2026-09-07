@@ -12,6 +12,7 @@ from src.core.logging import get_logger
 from src.models.eval import (
     EvalCase, EvalResult, EvalRun, EvalRunStatus, EvalSuite,
 )
+from src.models.repo import Repo, RepoStatus
 from src.models.user import User
 from src.schemas.eval import (
     EvalCaseCreate, EvalCaseResponse, EvalRunDetailResponse, EvalRunResponse,
@@ -41,6 +42,7 @@ async def _suite_response(db: AsyncSession, suite: EvalSuite) -> EvalSuiteRespon
     return EvalSuiteResponse(
         id=suite.id, name=suite.name, description=suite.description,
         document_ids=suite.document_ids or None,
+        repo_id=suite.repo_id,
         created_at=suite.created_at, updated_at=suite.updated_at,
         case_count=int(count),
     )
@@ -52,11 +54,30 @@ async def create_suite(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if payload.repo_id and payload.document_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Suite is either doc-scoped (document_ids) or repo-scoped (repo_id), not both",
+        )
+    if payload.repo_id:
+        repo = (await db.execute(
+            select(Repo).where(
+                Repo.id == payload.repo_id, Repo.user_id == current_user.id
+            )
+        )).scalar_one_or_none()
+        if repo is None:
+            raise HTTPException(status_code=404, detail="Repo not found")
+        if repo.status != RepoStatus.COMPLETED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Repo not ready (status={repo.status.value}). Wait for ingest to complete before creating an eval.",
+            )
     suite = EvalSuite(
         user_id=current_user.id,
         name=payload.name.strip(),
         description=payload.description,
         document_ids=[str(d) for d in payload.document_ids] if payload.document_ids else None,
+        repo_id=payload.repo_id,
     )
     db.add(suite)
     await db.commit()
@@ -66,14 +87,15 @@ async def create_suite(
 
 @evals_router.get("/suites", response_model=list[EvalSuiteResponse])
 async def list_suites(
+    repo_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    rows = (await db.execute(
-        select(EvalSuite)
-        .where(EvalSuite.user_id == current_user.id)
-        .order_by(EvalSuite.updated_at.desc())
-    )).scalars().all()
+    stmt = select(EvalSuite).where(EvalSuite.user_id == current_user.id)
+    if repo_id is not None:
+        stmt = stmt.where(EvalSuite.repo_id == repo_id)
+    stmt = stmt.order_by(EvalSuite.updated_at.desc())
+    rows = (await db.execute(stmt)).scalars().all()
     return [await _suite_response(db, s) for s in rows]
 
 
@@ -163,6 +185,12 @@ async def start_run(
     )).scalar_one()
     if not count:
         raise HTTPException(status_code=400, detail="Suite has no cases")
+    if suite.repo_id:
+        scope_label = "repo"
+    elif suite.document_ids:
+        scope_label = "document_ids"
+    else:
+        scope_label = "all"
     run = EvalRun(
         suite_id=suite.id,
         status=EvalRunStatus.QUEUED,
@@ -170,7 +198,7 @@ async def start_run(
         settings_snapshot={
             # Cheap-and-honest snapshot; extend as more knobs land.
             "top_k": 5,
-            "scope": "document_ids" if suite.document_ids else "all",
+            "scope": scope_label,
         },
     )
     db.add(run)

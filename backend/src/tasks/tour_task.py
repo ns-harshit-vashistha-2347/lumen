@@ -142,6 +142,12 @@ def generate_repo_tour_task(self, repo_id: str) -> dict:
         pairs = _pick_files_from_chunks(collection_name)
     if not pairs:
         logger.info(f"[tour] repo={repo_id} no source files to tour")
+        _write_tour(
+            repo_id,
+            "_No tour available — this repo has no top-level README or "
+            "manifest files (package.json, pyproject.toml, Dockerfile, …) "
+            "for the tour generator to summarise._",
+        )
         return {"status": "skipped", "reason": "no source"}
 
     llm = get_llm(task="generate_complex", temperature=0.15, pipeline="code")
@@ -154,21 +160,40 @@ def generate_repo_tour_task(self, repo_id: str) -> dict:
         tour = (response.content or "").strip()
     except Exception as exc:  # noqa: BLE001
         logger.exception(f"[tour] llm failed for repo={repo_id}: {exc}")
-        raise self.retry(exc=exc)
+        # Retry once; on the final attempt, persist a visible failure marker
+        # so the UI stops polling and the user knows to hit regenerate.
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            _write_tour(
+                repo_id,
+                f"_Tour generation failed: {str(exc)[:200]}. Hit **regenerate** to retry._",
+            )
+            return {"status": "failed", "reason": str(exc)[:200]}
 
     if not tour:
+        _write_tour(
+            repo_id,
+            "_The tour generator returned an empty response. Hit **regenerate** to retry._",
+        )
         return {"status": "empty"}
 
+    _write_tour(repo_id, tour)
+    logger.info(f"[tour] repo={repo_id} tour generated ({len(tour)} chars)")
+    return {"status": "ok", "chars": len(tour)}
+
+
+def _write_tour(repo_id: str, markdown: str) -> None:
+    """Persist a tour result to Repo. Used for the happy path AND for
+    skipped/empty/failed placeholders so `tour_markdown` becomes non-null,
+    the /tour endpoint returns "ready", and the frontend stops polling."""
     db = get_sync_db()
     try:
         repo = db.get(Repo, repo_id)
         if repo is None:
-            return {"status": "not_found"}
-        repo.tour_markdown = tour
+            return
+        repo.tour_markdown = markdown
         repo.tour_generated_at = datetime.now(timezone.utc)
         db.commit()
     finally:
         db.close()
-
-    logger.info(f"[tour] repo={repo_id} tour generated ({len(tour)} chars)")
-    return {"status": "ok", "chars": len(tour)}

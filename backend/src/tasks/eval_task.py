@@ -28,6 +28,32 @@ from src.models.eval import (
 logger = get_logger(__name__)
 
 
+def _coerce_content(value) -> str:
+    """LangChain message `.content` is str for OpenAI/Groq but a list of
+    {type, text|...} parts for Gemini and some Anthropic responses. The
+    eval_results.actual_answer column is Text, so psycopg2 blows up with
+    "can't adapt type 'dict'" when we hand it the raw list. Flatten to a
+    plain string here — same helper the judge uses on its own response."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for p in value:
+            if isinstance(p, dict):
+                # Standard shape: {"type": "text", "text": "..."}. Skip
+                # non-text parts (images, tool calls) — the eval only
+                # cares about the model's textual answer.
+                t = p.get("text")
+                if isinstance(t, str) and t:
+                    parts.append(t)
+            elif isinstance(p, str):
+                parts.append(p)
+        return "".join(parts)
+    return str(value)
+
+
 JUDGE_SYSTEM_PROMPT = """You are grading an answer against an expected reference.
 
 The `expected` field may be:
@@ -123,7 +149,7 @@ def _run_case_sync(
 
     t0 = time.time()
     result = loop.run_until_complete(_go())
-    answer = result.get("answer", "")
+    answer = _coerce_content(result.get("answer", ""))
     sources_raw = (
         result.get("compressed_results")
         or result.get("reranked_results")

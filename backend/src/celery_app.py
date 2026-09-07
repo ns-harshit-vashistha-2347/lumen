@@ -10,6 +10,8 @@ celery_app = Celery(
     include=[
         "src.tasks.ingestion_tasks",
         "src.tasks.code_ingestion_tasks",
+        "src.tasks.eval_task",
+        "src.tasks.tour_task",
     ],
 )
 
@@ -27,5 +29,7 @@ celery_app.conf.update(
         "ingest_document_task": {"queue": "ingestion"},
         "ingest_repo_task": {"queue": "ingestion"},
         "reindex_repo_task": {"queue": "ingestion"},
+        "run_eval_suite_task": {"queue": "eval"},
+        "generate_repo_tour_task": {"queue": "tour"},
     },
 )

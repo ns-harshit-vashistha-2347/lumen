@@ -17,6 +17,7 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  FlaskConical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -786,9 +787,9 @@ function DocumentsInner() {
         }}
       />
 
-      {/* floating action pill — jump to chat */}
+      {/* floating action pill — jump to chat or eval with selection */}
       {inScope.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2 animate-slide-up">
+        <div className="fixed bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 animate-slide-up">
           <Link
             href="/chat"
             className="group flex items-center gap-3 rounded-full border border-mk-green/60 bg-bg-soft/95 py-2 pl-3 pr-1.5 shadow-[0_10px_40px_-10px_rgba(166,226,46,0.6),0_0_0_1px_rgba(166,226,46,0.15)] backdrop-blur"
@@ -801,6 +802,14 @@ function DocumentsInner() {
               <MessageSquare className="h-3.5 w-3.5" />
               chat with these
             </span>
+          </Link>
+          <Link
+            href="/evals?fromScope=1"
+            className="group inline-flex items-center gap-1.5 rounded-full border border-mk-blue/60 bg-bg-soft/95 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-mk-blue shadow-[0_10px_40px_-10px_rgba(102,217,239,0.5),0_0_0_1px_rgba(102,217,239,0.15)] backdrop-blur hover:bg-mk-blue/10"
+            title="Create an eval suite scoped to the selected documents"
+          >
+            <FlaskConical className="h-3.5 w-3.5" />
+            eval these
           </Link>
         </div>
       )}

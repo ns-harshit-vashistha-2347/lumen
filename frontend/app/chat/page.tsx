@@ -112,6 +112,11 @@ function ChatInner() {
       case "scope":
         router.push("/documents");
         break;
+      case "eval":
+        // Carry the current scope over so the new-suite modal opens with
+        // the selected documents pre-filled.
+        router.push(scope.size > 0 ? "/evals?fromScope=1" : "/evals");
+        break;
       case "run":
         setInput("");
         submit(outcome.prompt);

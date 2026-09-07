@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { docsApi, type Document } from "@/lib/rag";
 import { ApiError } from "@/lib/api";
-import { useScope } from "@/lib/scope-store";
+import { scopeStore, useScope } from "@/lib/scope-store";
 
 export function ScopeBar() {
   const [scope, store] = useScope();
@@ -18,7 +18,22 @@ export function ScopeBar() {
     docsApi
       .list()
       .then((d) => {
-        if (!cancelled) setDocs(d);
+        if (cancelled) return;
+        setDocs(d);
+        // Prune scope entries whose documents no longer exist (deleted
+        // library, wiped account, or IDs from an old backend). A stale
+        // ID would silently blank out every retrieval — the /query
+        // pipeline filters on document_id, sees no matches, and the
+        // LLM answers "no context". Drop it here so the scope stays
+        // truthful to what the library actually holds.
+        const known = new Set(d.map((doc) => doc.id));
+        const current = scopeStore.get();
+        const stale = [...current].filter((id) => !known.has(id));
+        if (stale.length > 0) {
+          const next = new Set(current);
+          stale.forEach((id) => next.delete(id));
+          scopeStore.set(next);
+        }
       })
       .catch((err) => {
         // Never rethrow inside the promise chain — that becomes an unhandled

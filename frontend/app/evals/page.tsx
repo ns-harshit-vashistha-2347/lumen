@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { scopeStore } from "@/lib/scope-store";
 import {
   Plus,
   Play,
@@ -81,6 +83,21 @@ function EvalsInner() {
   const [suitesLoading, setSuitesLoading] = useState(true);
   const [selectedSuite, setSelectedSuite] = useState<EvalSuite | null>(null);
   const [creating, setCreating] = useState(false);
+  const [seedScopeIds, setSeedScopeIds] = useState<string[] | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Deep-link from the library's "eval these" pill: `?fromScope=1` opens
+  // the new-suite modal with the current chat scope pre-selected. We strip
+  // the param after handling so a refresh doesn't re-trigger.
+  useEffect(() => {
+    if (searchParams.get("fromScope") !== "1") return;
+    const ids = [...scopeStore.get()];
+    setSeedScopeIds(ids);
+    setCreating(true);
+    router.replace("/evals");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refresh = useCallback(async () => {
     setSuitesLoading(true);
@@ -177,11 +194,16 @@ function EvalsInner() {
 
       {creating && (
         <NewSuiteModal
-          onClose={() => setCreating(false)}
+          seedScopeIds={seedScopeIds}
+          onClose={() => {
+            setCreating(false);
+            setSeedScopeIds(null);
+          }}
           onCreated={(s) => {
             setSuites((cur) => [s, ...cur]);
             setSelectedSuite(s);
             setCreating(false);
+            setSeedScopeIds(null);
           }}
         />
       )}
@@ -800,16 +822,22 @@ function RunResults({ detail }: { detail: EvalRunDetail }) {
 function NewSuiteModal({
   onClose,
   onCreated,
+  seedScopeIds,
 }: {
   onClose: () => void;
   onCreated: (s: EvalSuite) => void;
+  seedScopeIds?: string[] | null;
 }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
-  const [scope, setScope] = useState<"all" | "docs">("all");
+  const [scope, setScope] = useState<"all" | "docs">(
+    seedScopeIds && seedScopeIds.length > 0 ? "docs" : "all"
+  );
   const [docs, setDocs] = useState<Document[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
-  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(
+    () => new Set(seedScopeIds || [])
+  );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -1124,7 +1152,9 @@ export default function EvalsPage() {
   return (
     <AuthProvider>
       <AppShell>
-        <EvalsInner />
+        <Suspense fallback={null}>
+          <EvalsInner />
+        </Suspense>
       </AppShell>
     </AuthProvider>
   );

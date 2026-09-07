@@ -109,7 +109,12 @@ async def run_query(
             trace_id=trace_id,
         )
 
-    if not history:
+    # Skip caching responses with no sources: those are retrieval misses
+    # (e.g. asked while a scoped doc was still ingesting) and would poison
+    # the cache — every later ask of that same query for the same scope
+    # would hit the cached "no context" answer, even after the docs are
+    # fully indexed.
+    if not history and sources:
         set_cached_query(
             payload.query, payload.top_k, str(current_user.id),
             QueryResponse(**response_payload).model_dump(mode="json"),
@@ -252,7 +257,10 @@ async def run_query_stream(
         # Populate the same cache /query uses so a repeat streaming call
         # for an unchanged (user, scope, query) with no history skips the
         # LLM entirely on the next request.
-        if stream_ok and answer_text and not history:
+        # Same guard as /query: don't cache retrieval misses. A poisoned
+        # cache entry would keep serving "no context" even after the
+        # user's doc finishes ingesting.
+        if stream_ok and answer_text and not history and source_payload:
             try:
                 set_cached_query(
                     payload.query, payload.top_k, str(current_user.id),

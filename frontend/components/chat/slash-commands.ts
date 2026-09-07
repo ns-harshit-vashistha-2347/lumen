@@ -19,12 +19,14 @@ export const CHAT_SLASH: SlashDefinition[] = [
   { cmd: "/clear", desc: "wipe this conversation" },
   { cmd: "/scope", desc: "open library to select documents" },
   { cmd: "/summarize", desc: "summarise every doc in scope" },
+  { cmd: "/eval", desc: "open eval suites (uses current scope)" },
 ];
 
 export type SlashOutcome =
   | { kind: "help" }
   | { kind: "clear" }
   | { kind: "scope" }
+  | { kind: "eval" }
   | { kind: "run"; prompt: string }
   | { kind: "unknown"; cmd: string }
   | { kind: "not-slash" };
@@ -42,6 +44,9 @@ export function parseSlash(text: string): SlashOutcome {
       return { kind: "clear" };
     case "/scope":
       return { kind: "scope" };
+    case "/eval":
+    case "/evals":
+      return { kind: "eval" };
     case "/summarize":
       return {
         kind: "run",

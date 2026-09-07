@@ -55,7 +55,20 @@ def _judge(question: str, expected: str, actual: str) -> tuple[EvalVerdict, str,
                 f"Actual:\n{actual}"
             )),
         ])
-        raw = (resp.content or "").strip()
+        content = resp.content
+        if isinstance(content, list):
+            # Gemini (and some LC providers) return a list of content parts.
+            content = "".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in content
+            )
+        raw = (content or "").strip()
+        # Strip ```json fences the judge sometimes wraps around the object.
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
         parsed = json.loads(raw)
         verdict = str(parsed.get("verdict", "fail")).lower()
         reason = str(parsed.get("reason", ""))[:2000]
@@ -146,7 +159,12 @@ def run_eval_suite_task(self, run_id: str) -> dict:
         db.close()
 
     pass_count = partial_count = fail_count = error_count = 0
-    for case in cases_payload:
+    # Free-tier LLM quotas (Gemini 15 rpm, Groq TPM caps) — pace ourselves
+    # rather than burning half the run on 429s.
+    CASE_INTERVAL_S = 4.5
+    for i, case in enumerate(cases_payload):
+        if i > 0:
+            time.sleep(CASE_INTERVAL_S)
         try:
             answer, sources, latency = _run_case_sync(
                 user_id, document_ids, case["question"]

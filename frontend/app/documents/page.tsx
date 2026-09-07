@@ -93,12 +93,25 @@ function DocumentsInner() {
     try {
       const data = await docsApi.list();
       setDocs(data);
+      // Drop scope entries whose docs no longer exist (deleted, wiped,
+      // re-ingested under new IDs). Otherwise chat keeps sending stale
+      // document_ids and every query returns zero sources.
+      const live = new Set(data.map((d) => d.id));
+      const current = store.get();
+      let dirty = false;
+      current.forEach((id) => {
+        if (!live.has(id)) {
+          current.delete(id);
+          dirty = true;
+        }
+      });
+      if (dirty) store.set(current);
     } catch (err) {
       if (err instanceof ApiError) toast.error(err.detail);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [store]);
 
   useEffect(() => {
     loadDocs();

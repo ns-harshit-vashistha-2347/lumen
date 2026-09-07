@@ -131,7 +131,7 @@ export function MatrixRain({
       ref={canvasRef}
       aria-hidden
       style={{ opacity }}
-      className={`pointer-events-none absolute inset-0 h-full w-full ${className}`}
+      className={`matrix-rain pointer-events-none absolute inset-0 h-full w-full ${className}`}
     />
   );
 }

@@ -162,11 +162,19 @@ def run_eval_suite_task(self, run_id: str) -> dict:
         db.close()
 
     pass_count = partial_count = fail_count = error_count = 0
-    # Free-tier LLM quotas (Gemini 15 rpm, Groq TPM caps) — pace ourselves
-    # rather than burning half the run on 429s.
-    CASE_INTERVAL_S = 4.5
+    # Small breather between cases so we don't hammer Groq's per-minute
+    # limits back-to-back. Groq gpt-oss-120b tolerates this fine; bump
+    # up if you switch back to a stricter free tier.
+    CASE_INTERVAL_S = 0.5
     # One loop for the entire run — see _run_case_sync for why.
     loop = asyncio.new_event_loop()
+    # The rerank batcher caches an asyncio.Queue keyed to whichever loop
+    # first touched it. A previous eval run on this worker will have left
+    # a batcher bound to a now-closed loop; reusing it here blows up with
+    # "Event loop is closed" the moment we submit. Drop the cache so the
+    # next submit rebuilds the batcher against the loop we just created.
+    from src.nodes.retrieval import rerank as _rerank_mod
+    _rerank_mod._BATCHERS.clear()
     try:
         for i, case in enumerate(cases_payload):
             if i > 0:

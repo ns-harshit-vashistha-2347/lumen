@@ -8,6 +8,7 @@ friendly. Multiple runs across suites still parallelise via Celery.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -84,15 +85,21 @@ def _judge(question: str, expected: str, actual: str) -> tuple[EvalVerdict, str,
         return EvalVerdict.ERROR, f"judge error: {exc}", 0.0
 
 
-def _run_case_sync(user_id: str, document_ids: list[str] | None, question: str) -> tuple[str, list, int]:
-    """Execute the query pipeline synchronously for a single case.
-    Returns (answer, sources_payload, latency_ms).
+def _run_case_sync(
+    loop,
+    user_id: str,
+    document_ids: list[str] | None,
+    question: str,
+) -> tuple[str, list, int]:
+    """Execute the query pipeline synchronously for a single case on the
+    provided event loop. Returns (answer, sources_payload, latency_ms).
 
-    The Celery task runs in a thread pool, so we drive the async graph via
-    a fresh event loop rather than blocking a shared one.
+    The loop is owned by the caller and reused across cases — the rerank
+    module holds a singleton batcher whose asyncio.Queue is bound to the
+    first loop it saw, so tearing the loop down between cases would leave
+    the queue tied to a closed loop and the next case blows up with
+    "Event loop is closed".
     """
-    import asyncio
-
     async def _go():
         state = {
             "query": question,
@@ -103,12 +110,8 @@ def _run_case_sync(user_id: str, document_ids: list[str] | None, question: str) 
         }
         return await query_graph.ainvoke(state)
 
-    loop = asyncio.new_event_loop()
-    try:
-        t0 = time.time()
-        result = loop.run_until_complete(_go())
-    finally:
-        loop.close()
+    t0 = time.time()
+    result = loop.run_until_complete(_go())
     answer = result.get("answer", "")
     sources_raw = (
         result.get("compressed_results")
@@ -162,49 +165,54 @@ def run_eval_suite_task(self, run_id: str) -> dict:
     # Free-tier LLM quotas (Gemini 15 rpm, Groq TPM caps) — pace ourselves
     # rather than burning half the run on 429s.
     CASE_INTERVAL_S = 4.5
-    for i, case in enumerate(cases_payload):
-        if i > 0:
-            time.sleep(CASE_INTERVAL_S)
-        try:
-            answer, sources, latency = _run_case_sync(
-                user_id, document_ids, case["question"]
-            )
-            verdict, reason, score = _judge(case["question"], case["expected"], answer)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(f"[eval] case failed: {exc}")
-            answer, sources, latency = "", [], 0
-            verdict, reason, score = EvalVerdict.ERROR, f"pipeline error: {exc}"[:1000], 0.0
+    # One loop for the entire run — see _run_case_sync for why.
+    loop = asyncio.new_event_loop()
+    try:
+        for i, case in enumerate(cases_payload):
+            if i > 0:
+                time.sleep(CASE_INTERVAL_S)
+            try:
+                answer, sources, latency = _run_case_sync(
+                    loop, user_id, document_ids, case["question"]
+                )
+                verdict, reason, score = _judge(case["question"], case["expected"], answer)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"[eval] case failed: {exc}")
+                answer, sources, latency = "", [], 0
+                verdict, reason, score = EvalVerdict.ERROR, f"pipeline error: {exc}"[:1000], 0.0
 
-        if verdict is EvalVerdict.PASS:
-            pass_count += 1
-        elif verdict is EvalVerdict.PARTIAL:
-            partial_count += 1
-        elif verdict is EvalVerdict.FAIL:
-            fail_count += 1
-        else:
-            error_count += 1
+            if verdict is EvalVerdict.PASS:
+                pass_count += 1
+            elif verdict is EvalVerdict.PARTIAL:
+                partial_count += 1
+            elif verdict is EvalVerdict.FAIL:
+                fail_count += 1
+            else:
+                error_count += 1
 
-        db = get_sync_db()
-        try:
-            db.add(EvalResult(
-                run_id=run_id,
-                case_id=case["id"],
-                verdict=verdict,
-                actual_answer=answer,
-                judge_reason=reason,
-                latency_ms=latency,
-                sources=sources,
-                score=score,
-            ))
-            r = db.get(EvalRun, run_id)
-            if r is not None:
-                r.pass_count = pass_count
-                r.partial_count = partial_count
-                r.fail_count = fail_count
-                r.error_count = error_count
-            db.commit()
-        finally:
-            db.close()
+            db = get_sync_db()
+            try:
+                db.add(EvalResult(
+                    run_id=run_id,
+                    case_id=case["id"],
+                    verdict=verdict,
+                    actual_answer=answer,
+                    judge_reason=reason,
+                    latency_ms=latency,
+                    sources=sources,
+                    score=score,
+                ))
+                r = db.get(EvalRun, run_id)
+                if r is not None:
+                    r.pass_count = pass_count
+                    r.partial_count = partial_count
+                    r.fail_count = fail_count
+                    r.error_count = error_count
+                db.commit()
+            finally:
+                db.close()
+    finally:
+        loop.close()
 
     db = get_sync_db()
     try:

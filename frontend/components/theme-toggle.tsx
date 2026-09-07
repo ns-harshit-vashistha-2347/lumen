@@ -1,14 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Terminal, Palette, Sun, Sparkles } from "lucide-react";
+import { Palette, Sun } from "lucide-react";
 
-export type ThemeName = "monokai" | "matrix" | "light" | "nova";
+export type ThemeName = "monokai" | "light";
 
-// Nova is a full re-skin (see globals.css — decorative utilities are
-// re-scoped under [data-theme="nova"]), not just a palette. Kept in the
-// cycle so users can toggle it alongside the terminal-style themes.
-const ORDER: ThemeName[] = ["monokai", "matrix", "light", "nova"];
+const ORDER: ThemeName[] = ["monokai", "light"];
 
 function applyTheme(t: ThemeName) {
   const html = document.documentElement;
@@ -25,7 +22,9 @@ function readStored(): ThemeName {
   if (typeof window === "undefined") return "monokai";
   try {
     const v = localStorage.getItem("lumen.theme") as ThemeName | null;
-    if (v === "matrix" || v === "light" || v === "monokai" || v === "nova") return v;
+    if (v === "light" || v === "monokai") return v;
+    // Any stored value from the retired themes (matrix / nova) falls
+    // back to monokai instead of leaving the app in an unknown state.
   } catch {
     /* noop */
   }
@@ -51,10 +50,6 @@ export function ThemeToggle() {
   const meta =
     theme === "light"
       ? { icon: <Sun className="h-3 w-3 text-mk-yellow" />, label: "light" }
-      : theme === "matrix"
-      ? { icon: <Terminal className="h-3 w-3 text-mk-green" />, label: "matrix" }
-      : theme === "nova"
-      ? { icon: <Sparkles className="h-3 w-3 text-mk-blue" />, label: "nova" }
       : { icon: <Palette className="h-3 w-3 text-mk-pink" />, label: "monokai" };
 
   return (

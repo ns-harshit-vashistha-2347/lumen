@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('lumen.theme');if(t&&t!=='monokai')document.documentElement.setAttribute('data-theme',t);}catch(e){}`,
+            __html: `try{var t=localStorage.getItem('lumen.theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}`,
           }}
         />
       </head>

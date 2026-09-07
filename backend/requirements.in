@@ -59,3 +59,5 @@ kuzu
 # split into a requirements-dev.in later if you need a slimmer prod image.
 pytest
 pytest-asyncio
+
+transformers<4.50

@@ -10,8 +10,8 @@ alembic upgrade head
 
 echo "==> starting celery worker (background)"
 celery -A src.celery_app worker \
-    -Q ingestion \
-    -n ingestion_worker@%h \
+    -Q ingestion,eval,tour \
+    -n worker@%h \
     --concurrency=2 \
     --loglevel=info &
 

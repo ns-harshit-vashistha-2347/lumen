@@ -101,6 +101,65 @@ services:
       chromadb:
         condition: service_started
 
+  celery_worker_eval:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: world-backend:latest
+    container_name: world_celery_eval
+    restart: unless-stopped
+    command: celery -A src.celery_app worker -Q eval -n eval_worker@%h --loglevel=info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      CHROMA_HOST: chromadb
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - .:/app
+      - uploads_data:/data/uploads
+      - hf_cache:/root/.cache/huggingface
+      - kuzu_data:/data/kuzu
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+
+  celery_worker_tour:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: world-backend:latest
+    container_name: world_celery_tour
+    restart: unless-stopped
+    command: celery -A src.celery_app worker -Q tour -n tour_worker@%h --loglevel=info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      CHROMA_HOST: chromadb
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - .:/app
+      - uploads_data:/data/uploads
+      - hf_cache:/root/.cache/huggingface
+      - repo_clones:/data/repos
+      - kuzu_data:/data/kuzu
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+
   flower:
     build:
       context: .
@@ -122,6 +181,8 @@ services:
     depends_on:
       - redis
       - celery_worker_ingestion
+      - celery_worker_eval
+      - celery_worker_tour
 
 volumes:
   postgres_data:
